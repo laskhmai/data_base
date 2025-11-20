@@ -540,3 +540,37 @@ if _name_ == "_main_":  # <<< CHANGED: fixed main guard
 
     # Optional: write a small sample to CSV for validation in SSMS
     # gold_df.head(1000).to_csv(r"C:\temp\gold_5_1_sample.csv", index=False)
+
+
+        # --------------------------------------------------
+    # Gate: if final_app_service_id is in invalid_ids,
+    # then DO NOT keep any app/owner fields.
+    # --------------------------------------------------
+    invalid_final_id_mask = final_df["final_app_service_id"].apply(
+        lambda v: has_invalid_final_id(v, invalid_ids)
+    )
+
+    cols_to_null_when_invalid = [
+        "billing_owner_appsvcid",
+        "support_owner_appsvcid",
+        "billing_owner_appid",
+        "support_owner_appid",
+        "billing_owner_eapmid",
+        "support_owner_eapmid",
+        "application_name",
+        "billing_owner_name",
+        "support_owner_name",
+        "billing_owner_email",
+        "support_owner_email",
+        "business_unit",
+        "department",
+    ]
+
+    for c in cols_to_null_when_invalid:
+        if c in final_df.columns:
+            final_df.loc[invalid_final_id_mask, c] = None
+
+
+
+def has_invalid_final_id(value, invalid_ids) -> bool:
+    return normalize_str(value) in invalid_ids
