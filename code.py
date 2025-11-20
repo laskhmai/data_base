@@ -169,14 +169,27 @@ def transform(
     )
 
     def pick_orphan_appsvc(row: pd.Series) -> Optional[str]:
-        # try 4.1 AppSvc first (in case isOrphaned flag is wrong)
+        """
+        For orphaned rows:
+        1) Try 4.1 billing/support AppSvcID.
+        2) If that is missing or invalid, use Tags.app_service_id
+           (email, name, etc.) as long as it is NOT in invalid_ids.
+        """
+        # 1) 4.1 AppSvc (Billing/Support)
         primary = pick_app_service_id(row)
         if primary:
-            return primary
-        # else, use tags app_service_id
+            p_norm = normalize_str(primary)
+            if p_norm not in invalid_ids:
+                return primary.strip()
+
+        # 2) Tag app_service_id, but only if not in invalid_ids
         tag_val = row.get("app_service_id")
-        if isinstance(tag_val, str) and tag_val.strip():
-            return tag_val.strip()
+        if isinstance(tag_val, str):
+            v = tag_val.strip()
+            if v and normalize_str(v) not in invalid_ids:
+                return v  # this will return 'CWADDELL@HUMANA.COM' in your example
+
+        # 3) nothing usable
         return None
 
     orphan_tags["final_app_service_id"] = orphan_tags.apply(pick_orphan_appsvc, axis=1)
