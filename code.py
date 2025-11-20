@@ -168,29 +168,42 @@ def transform(
         suffixes=("", "_tag"),
     )
 
-    def pick_orphan_appsvc(row: pd.Series) -> Optional[str]:
+        # Local normalizer to avoid NameError
+    def _norm(value) -> str:
+        if pd.isna(value):
+            return ""
+        return str(value).strip().lower()
+
+    def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
         """
-        For orphaned rows:
-        1) Try 4.1 billing/support AppSvcID.
-        2) If that is missing or invalid, use Tags.app_service_id
-           (email, name, etc.) as long as it is NOT in invalid_ids.
+        Orphan logic:
+        1) Try 4.1 billing/support AppSvcID if not in invalid_ids.
+        2) Else use tag app_service_id if not in invalid_ids.
+        3) Else fallback to tag app_id_source_tag if not in invalid_ids.
         """
-        # 1) 4.1 AppSvc (Billing/Support)
+        # 1) 4.1 value
         primary = pick_app_service_id(row)
         if primary:
-            p_norm = normalize_str(primary)
+            p_norm = _norm(primary)
             if p_norm not in invalid_ids:
                 return primary.strip()
 
-        # 2) Tag app_service_id, but only if not in invalid_ids
+        # 2) Tags: app_service_id
         tag_val = row.get("app_service_id")
         if isinstance(tag_val, str):
             v = tag_val.strip()
-            if v and normalize_str(v) not in invalid_ids:
-                return v  # this will return 'CWADDELL@HUMANA.COM' in your example
+            if v and _norm(v) not in invalid_ids:
+                return v
 
-        # 3) nothing usable
+        # 3) Tags: app_id_source_tag (fallback)
+        tag2 = row.get("app_id_source_tag")
+        if isinstance(tag2, str):
+            v2 = tag2.strip()
+            if v2 and _norm(v2) not in invalid_ids:
+                return v2
+
         return None
+
 
     orphan_tags["final_app_service_id"] = orphan_tags.apply(pick_orphan_appsvc, axis=1)
     orphan_tags["appserviceid_key"] = (
