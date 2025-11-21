@@ -623,3 +623,9 @@ def has_invalid_final_id(value, invalid_ids) -> bool:
 
     # 4. Remove duplicates on the same key
     apps = apps.drop_duplicates(subset=["appserviceid_key"], keep="first")
+
+    SELECT COUNT(*) AS Active_Last_1_Day
+FROM 
+WHERE isDeleted = 0
+  AND ProcessingDate >= DATEADD(DAY, -1, GETUTCDATE());
+
