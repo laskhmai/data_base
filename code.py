@@ -600,3 +600,26 @@ if _name_ == "_main_":  # <<< CHANGED: fixed main guard
 
 def has_invalid_final_id(value, invalid_ids) -> bool:
     return normalize_str(value) in invalid_ids
+
+
+    # ==================================================
+    # FIX: Build apps lookup for BOTH AppServiceID and AppID
+    # ==================================================
+
+    # 1. Key by AppServiceID (normal case)
+    apps_by_service = apps.copy()
+    apps_by_service["appserviceid_key"] = (
+        apps_by_service["AppServiceID"].astype(str).str.lower()
+    )
+
+    # 2. Key by AppID (important for orphan rows like app0002232)
+    apps_by_appid = apps.copy()
+    apps_by_appid["appserviceid_key"] = (
+        apps_by_appid["AppID"].astype(str).str.lower()
+    )
+
+    # 3. Combine both
+    apps = pd.concat([apps_by_service, apps_by_appid], ignore_index=True)
+
+    # 4. Remove duplicates on the same key
+    apps = apps.drop_duplicates(subset=["appserviceid_key"], keep="first")
