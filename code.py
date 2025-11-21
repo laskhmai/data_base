@@ -629,3 +629,17 @@ FROM
 WHERE isDeleted = 0
   AND ProcessingDate >= DATEADD(DAY, -1, GETUTCDATE());
 
+SELECT
+    CAST(ProcessingDate AS DATE) AS [Date],
+    COUNT(*) AS Records
+FROM 
+WHERE isDeleted = 0
+GROUP BY CAST(ProcessingDate AS DATE)
+ORDER BY [Date] DESC;
+
+
+SELECT COUNT(*) AS Tags_Last_1_Day
+FROM [Gold].[VTag_Azure_InferredTags]
+WHERE processing_date >= DATEADD(DAY, -1, GETUTCDATE());
+
+
