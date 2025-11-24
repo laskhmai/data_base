@@ -796,3 +796,34 @@ if __name__ == "__main__":
     #     table="[AZURE].[Final_Gold_Resources]",
     #     batch_size=5000,
     # )
+
+
+    # ---------- ownership method ----------
+    has_any_appsvc = bool(final_id_raw)          # any value at all
+    has_valid_tag_id = final_id.startswith(("app", "bsn"))
+    is_invalid_code = final_id in invalid_ids
+
+    if owner_source == "resourcetag":
+        method = "APM via Resource Owner Tag"
+
+    elif owner_source == "rginherited":
+        method = "APM via RG Tag Inference"
+
+    # Proper tag-based ID (app*/bsn*), not invalid
+    elif has_valid_tag_id and not is_invalid_code:
+        method = "APM via Resource Tag ID"
+
+    # Values like "15797": not invalid, not tag-based → naming pattern
+    elif has_any_appsvc and not is_invalid_code:
+        method = "APM via Naming Pattern"
+
+    # Source indicates naming/email pattern
+    elif "name" in app_name_source or "email" in app_name_source:
+        method = "APM via Naming Pattern"
+
+    # fallback: valid appsvc but couldn’t classify
+    elif has_any_appsvc:
+        method = "APM via Owner AppSvcID"
+
+    else:
+        method = "unmapped"
