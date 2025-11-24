@@ -820,3 +820,80 @@ final_df.loc[mask_eapm, "department"] = (
 # =======================================================
 # Continue with platform team mapping
 # =======================================================
+
+
+
+
+
+# ---------------------------------------------------------
+# EAPM enrichment – fill owner name, email, BU, department
+# for orphaned rows whose final_app_service_id is an EAPM id
+# ---------------------------------------------------------
+
+# 1. Build EAPM lookup table from Snow apps_df
+eapm_map = apps_df[["EapmId", "AppOwner", "AppOwnerEmail",
+                    "BusinessUnit", "Department"]].copy()
+
+# normalise EAPM Id
+eapm_map["eapm_key"] = (
+    eapm_map["EapmId"].astype(str).str.strip().str.lower()
+)
+
+# drop empty / duplicate keys
+eapm_map = eapm_map.dropna(subset=["eapm_key"])
+eapm_map = eapm_map.drop_duplicates(subset=["eapm_key"])
+
+# build lookup Series
+eapm_name_lookup = eapm_map.set_index("eapm_key")["AppOwner"]
+eapm_email_lookup = eapm_map.set_index("eapm_key")["AppOwnerEmail"]
+eapm_bu_lookup = eapm_map.set_index("eapm_key")["BusinessUnit"]
+eapm_dept_lookup = eapm_map.set_index("eapm_key")["Department"]
+
+
+def norm_id(val):
+    """Keep only numeric ids like 18034, 17535 as EAPM ids."""
+    if pd.isna(val):
+        return None
+    v = str(val).strip().lower()
+    return v if v.isdigit() else None
+
+
+# 2. Derive eapm_key from the final app id we chose
+#    (this column already contains appsvc / appid / eapmid)
+final_df["eapm_key"] = final_df["final_app_service_id"].apply(norm_id)
+
+# only rows that are orphaned AND actually have an EAPM match
+mask_eapm = final_df["eapm_key"].notna() & (final_df["isOrphaned"] == 1)
+
+# 3. Override NAME from EAPM (only where we have an EAPM match)
+final_df.loc[mask_eapm, "billing_owner_name"] = (
+    final_df.loc[mask_eapm, "billing_owner_name"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup))
+)
+
+final_df.loc[mask_eapm, "support_owner_name"] = (
+    final_df.loc[mask_eapm, "support_owner_name"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup))
+)
+
+# 4. Override EMAIL from EAPM
+final_df.loc[mask_eapm, "billing_owner_email"] = (
+    final_df.loc[mask_eapm, "billing_owner_email"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup))
+)
+
+final_df.loc[mask_eapm, "support_owner_email"] = (
+    final_df.loc[mask_eapm, "support_owner_email"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup))
+)
+
+# 5. Override BU + Department from EAPM
+final_df.loc[mask_eapm, "business_unit"] = (
+    final_df.loc[mask_eapm, "business_unit"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_bu_lookup))
+)
+
+final_df.loc[mask_eapm, "department"] = (
+    final_df.loc[mask_eapm, "department"]
+        .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup))
+)
