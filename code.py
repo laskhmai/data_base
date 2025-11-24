@@ -832,3 +832,29 @@ def normalize_str(value):
     if pd.isna(value):
         return ""
     return str(value).strip().lower()
+
+
+def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
+    # 1) Prefer primary appsvc (from snow or merged logic)
+    primary = pick_app_service_id(row)
+    if primary:
+        v_norm = normalize_str(primary)
+        if v_norm and v_norm not in invalid_ids:
+            return primary.strip()
+
+    # 2) Use tag app_service_id if present and not invalid
+    tag_appsvc = row.get("app_service_id")
+    if isinstance(tag_appsvc, str):
+        v = tag_appsvc.strip()
+        if v and normalize_str(v) not in invalid_ids:
+            return v
+
+    # 3) NEW: fall back to app_id if no appsvcid and app_id is not invalid
+    tag_appid = row.get("app_id")
+    if isinstance(tag_appid, str):
+        v = tag_appid.strip()
+        if v and normalize_str(v) not in invalid_ids:
+            return v
+
+    # nothing usable
+    return None
