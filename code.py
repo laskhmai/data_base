@@ -287,3 +287,32 @@ else:
             orphan_reason = "missing_tags"
         else:
             orphan_reason = "no_tags"
+
+
+            def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
+    # 1) Prefer primary appsvc (from Snow or merged logic)
+    primary = pick_app_service_id(row)
+    if primary:
+        return primary.strip()
+
+    # 2) Use tag app_service_id if present and not invalid
+    tag_appsvc = row.get("app_service_id")
+    if isinstance(tag_appsvc, str):
+        v = tag_appsvc.strip()
+        if v and normalize_str(v) not in invalid_ids:
+            return v
+
+    # 3) NEW: fall back to app_id if no appsvc and app_id is not invalid
+    tag_appid = row.get("app_id")
+    if isinstance(tag_appid, str):
+        v = tag_appid.strip()
+        # treat only real IDs (starting with "app") and not in invalid list
+        v_norm = normalize_str(v)
+        if v_norm.startswith("app") and v_norm not in invalid_ids:
+            return v
+
+    # nothing usable
+    return None
+
+orphan_tags["final_app_service_id"] = orphan_tags.apply(pick_orphaned_appsvc, axis=1)
+
