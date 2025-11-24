@@ -584,3 +584,25 @@ valid_eapm_ids = set(
                 orphan_reason = "missing_tags"
             else:
                 orphan_reason = "no_tags"
+
+
+
+
+# ---------- confidence ----------
+method_norm = normalize_str(method)
+final_id_raw = normalize_str(row.get("final_app_service_id") or row.get("final_app_service_id_raw") or "")
+
+if "naming pattern" in method_norm:
+    # EAPM-style numeric IDs (18034, 17535, etc.) → 60
+    if final_id_raw.isdigit():
+        confidence = 60
+    # Emails or plain names in the "ID" field → 30
+    else:
+        confidence = 30
+
+elif "rg tag inference" in method_norm:
+    confidence = 80
+elif "resource owner tag" in method_norm or "resource tag id" in method_norm:
+    confidence = 100
+else:
+    confidence = 0
