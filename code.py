@@ -606,3 +606,44 @@ elif "resource owner tag" in method_norm or "resource tag id" in method_norm:
     confidence = 100
 else:
     confidence = 0
+
+
+
+# -------------------------------------------------------
+# EAPM OVERRIDE BLOCK (add here before return final_df)
+# -------------------------------------------------------
+
+# Build normalized EAPM lookup from Snow
+eapm_map = apps_df[["EapmId", "AppOwner", "AppOwnerEmail",
+                    "BusinessUnit", "Department"]].copy()
+
+eapm_map["EapmId_norm"] = (
+    eapm_map["EapmId"].astype(str).str.strip().str.lower()
+)
+
+# Normalize final ID for joining
+final_df["final_id_norm"] = (
+    final_df["final_app_service_id"].astype(str).str.strip().str.lower()
+)
+
+# Join Snow metadata
+final_df = final_df.merge(
+    eapm_map,
+    left_on="final_id_norm",
+    right_on="EapmId_norm",
+    how="left",
+    suffixes=("", "_eapm")
+)
+
+# Override owner fields ONLY for orphaned rows mapped by EAPM
+mask_eapm_orphan = (
+    (final_df.get("is_orphaned", 0) == 1)
+    & final_df["AppOwner_eapm"].notna()
+)
+
+final_df.loc[mask_eapm_orphan, "billing_owner_name"]  = final_df["AppOwner_eapm"]
+final_df.loc[mask_eapm_orphan, "support_owner_name"]  = final_df["AppOwner_eapm"]
+final_df.loc[mask_eapm_orphan, "billing_owner_email"] = final_df["AppOwnerEmail_eapm"]
+final_df.loc[mask_eapm_orphan, "support_owner_email"] = final_df["AppOwnerEmail_eapm"]
+final_df.loc[mask_eapm_orphan, "business_unit"]       = final_df["BusinessUnit_eapm"]
+final_df.loc[mask_eapm_orphan, "department"]          = final_df["Department_eapm"]
