@@ -254,3 +254,36 @@ if orig_orphan == 1:
         # 3) has app/bsn pattern but still no AppID/owner
         else:
             orphan_reason = "no_tags"
+
+
+orig_orphan = int(row.get("original_is_orphaned") or 0)
+
+final_id_raw = row.get("final_app_service_id")
+final_id = normalize_str(final_id_raw)
+
+app_name  = normalize_str(row.get("application_name"))
+owner_name = normalize_str(row.get("billing_owner_name"))
+
+has_valid_appsvc = final_id.startswith(("app", "bsn"))
+has_person_or_app = bool(app_name or owner_name)
+
+# ---------- final orphan flag + reason ----------
+if orig_orphan == 0:
+    # never orphaned
+    final_orphan = 0
+    orphan_reason = None
+
+else:
+    # was orphaned
+    if has_valid_appsvc and has_person_or_app:
+        # tags gave us a proper mapping
+        final_orphan = 0
+        orphan_reason = "resolved_via_tags"
+    else:
+        # still orphaned
+        final_orphan = 1
+
+        if not final_id or final_id in invalid_ids:
+            orphan_reason = "missing_tags"
+        else:
+            orphan_reason = "no_tags"
