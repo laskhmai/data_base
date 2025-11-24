@@ -714,3 +714,36 @@ final_df.loc[mask_eapm_orphan, "department"]          = final_df["Department_eap
         final_df.loc[mask_eapm, "department"]
         .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup))
     )
+
+
+
+
+
+
+
+# key based on the final app id we chose (can be EapmId-like)
+final_df["eapm_key"] = final_df["final_app_service_id"].apply(norm_id)
+
+# we only care where we actually have a match AND row is orphaned
+mask_eapm_orphan = (final_df["is_orphaned"] == 1) & final_df["eapm_key"].notna()
+
+# --------- FILL NAME FROM EAPM (Snow) ----------
+final_df.loc[mask_eapm_orphan, "billing_owner_name"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_name_lookup)
+
+final_df.loc[mask_eapm_orphan, "support_owner_name"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_name_lookup)
+
+# --------- FILL EMAIL FROM EAPM ----------
+final_df.loc[mask_eapm_orphan, "billing_owner_email"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_email_lookup)
+
+final_df.loc[mask_eapm_orphan, "support_owner_email"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_email_lookup)
+
+# --------- FILL BU + DEPARTMENT FROM EAPM ----------
+final_df.loc[mask_eapm_orphan, "business_unit"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_bu_lookup)
+
+final_df.loc[mask_eapm_orphan, "department"] = \
+    final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_dept_lookup)
