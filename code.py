@@ -431,3 +431,35 @@ def transform(resources_df: pd.DataFrame,
     final_df["ProcessingDate"] = now_utc
 
     return final_df
+
+
+# --- FIX: ensure AppID is populated (fallback → final_app_service_id) ---
+
+def pick_owner_appid(row: pd.Series):
+    # 1) prefer AppID from SNOW
+    appid = row.get("AppID")
+    if isinstance(appid, str) and appid.strip():
+        return appid.strip()
+
+    # 2) then tag app_id
+    tag_appid = row.get("app_id")
+    if isinstance(tag_appid, str) and tag_appid.strip():
+        return tag_appid.strip()
+
+    # 3) fallback → final_app_service_id (only if valid)
+    fa = row.get("final_app_service_id")
+    if isinstance(fa, str):
+        v = fa.strip()
+        v_norm = normalize_str(v)
+        if (
+            v_norm
+            and v_norm not in invalid_ids
+            and (v_norm.startswith("app") or v_norm.startswith("bsn") or v_norm.isdigit())
+        ):
+            return v
+
+    return None
+
+# APPLY FIX FOR BOTH BILLING & SUPPORT OWNER APPID
+final_df["billing_owner_appid"] = final_df.apply(pick_owner_appid, axis=1)
+final_df["support_owner_appid"] = final_df["billing_owner_appid"]
