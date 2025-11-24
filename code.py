@@ -747,3 +747,76 @@ final_df.loc[mask_eapm_orphan, "business_unit"] = \
 
 final_df.loc[mask_eapm_orphan, "department"] = \
     final_df.loc[mask_eapm_orphan, "eapm_key"].map(eapm_dept_lookup)
+
+
+
+
+
+
+# =======================================================
+# Business unit & department
+# =======================================================
+final_df["business_unit"] = final_df.get("BusinessUnit")
+final_df["department"] = final_df.get("Department")
+
+invalid_final_id_mask = (
+    final_df["final_app_service_id"].astype(str).str.lower().str.strip().isin(invalid_ids)
+)
+
+# =======================================================
+# INSERT EAPM OVERRIDE BLOCK HERE
+# =======================================================
+
+# Build EAPM lookup
+eapm_map = apps_df[["EapmId", "AppOwner", "AppOwnerEmail", "BusinessUnit", "Department"]].copy()
+eapm_map["eapm_key"] = eapm_map["EapmId"].astype(str).str.strip().str.lower()
+eapm_map = eapm_map.drop_duplicates(subset=["eapm_key"])
+
+eapm_name_lookup = eapm_map.set_index("eapm_key")["AppOwner"]
+eapm_email_lookup = eapm_map.set_index("eapm_key")["AppOwnerEmail"]
+eapm_bu_lookup = eapm_map.set_index("eapm_key")["BusinessUnit"]
+eapm_dept_lookup = eapm_map.set_index("eapm_key")["Department"]
+
+def norm_id(val):
+    if pd.isna(val):
+        return None
+    v = str(val).strip().lower()
+    if v.isdigit():  # EAPM numeric cases like 18034, 17535
+        return v
+    return None
+
+# key based on the final app id
+final_df["eapm_key"] = final_df["final_app_service_id"].apply(norm_id)
+mask_eapm = final_df["eapm_key"].notna() & (final_df["is_orphaned"] == 1)
+
+# fill overrides only for EAPM cases
+final_df.loc[mask_eapm, "billing_owner_name"] = (
+      final_df.loc[mask_eapm, "billing_owner_name"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup))
+)
+final_df.loc[mask_eapm, "support_owner_name"] = (
+      final_df.loc[mask_eapm, "support_owner_name"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup))
+)
+
+final_df.loc[mask_eapm, "billing_owner_email"] = (
+      final_df.loc[mask_eapm, "billing_owner_email"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup))
+)
+final_df.loc[mask_eapm, "support_owner_email"] = (
+      final_df.loc[mask_eapm, "support_owner_email"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup))
+)
+
+final_df.loc[mask_eapm, "business_unit"] = (
+      final_df.loc[mask_eapm, "business_unit"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_bu_lookup))
+)
+final_df.loc[mask_eapm, "department"] = (
+      final_df.loc[mask_eapm, "department"]
+    .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup))
+)
+
+# =======================================================
+# Continue with platform team mapping
+# =======================================================
