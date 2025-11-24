@@ -827,3 +827,8 @@ if __name__ == "__main__":
 
     else:
         method = "unmapped"
+
+def normalize_str(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip().lower()
