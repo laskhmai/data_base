@@ -220,3 +220,37 @@ method_norm = normalize_str(method)
 
     if has_valid_appsvc and has_appid:
         confidence = 100
+
+
+        # ---------- orphan reason ----------
+orphan_reason = None
+
+# use the original flag to decide if we even care about orphan_reason
+orig_orphan = int(row.get("original_is_orphaned") or row.get("isOrphaned") or 0)
+
+if orig_orphan == 1:
+    # look at the effective AppID (Snow OR tags)
+    effective_appid = (
+        row.get("billing_owner_appid")
+        or row.get("AppID")
+        or row.get("app_id")
+    )
+
+    if pd.notna(effective_appid) and str(effective_appid).strip():
+        # originally orphaned, now we have an AppID -> resolved via tags/Snow
+        orphan_reason = "resolved_via_tags"
+    else:
+        # still orphaned -> classify WHY
+        final_norm = normalize_str(final_id)
+
+        # 1) no id or in invalid_ids -> treat as MISSING TAGS
+        if not final_norm or final_norm in invalid_ids:
+            orphan_reason = "missing_tags"
+
+        # 2) some random text that is not app*/bsn* and not in invalid_ids
+        elif not final_norm.startswith(("app", "bsn")):
+            orphan_reason = "invalid_appsvcid"
+
+        # 3) has app/bsn pattern but still no AppID/owner
+        else:
+            orphan_reason = "no_tags"
