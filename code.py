@@ -198,3 +198,25 @@ def insert_gold(gold_df: pd.DataFrame, batch_size: int = 50000):
 
     ownership_fields = final_df.apply(compute_ownership_fields, axis=1)
     final_df[ownership_fields.columns] = ownership_fields
+
+
+method_norm = normalize_str(method)
+    if "naming pattern" in method_norm:
+        confidence = 60
+    elif "rg tag inference" in method_norm:
+        confidence = 80
+    elif "resource owner tag" in method_norm or "resource tag id" in method_norm:
+        confidence = 100
+    else:
+        confidence = 0
+
+    # NEW: override confidence to 100 when we have BOTH AppSvcID and AppID
+    # final_id is your AppSvcID (from tags/4.1)
+    has_valid_appsvc = final_id.startswith(("app", "bsn"))
+
+    # billing_owner_appid already combines Snow.AppID + tags.app_id
+    appid_raw = row.get("billing_owner_appid") or row.get("AppID") or row.get("app_id")
+    has_appid = bool(normalize_str(appid_raw))
+
+    if has_valid_appsvc and has_appid:
+        confidence = 100
