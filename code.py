@@ -895,3 +895,14 @@ def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
 
     # 4. nothing usable
     return None
+
+
+# choose final app service id for orphaned rows
+orphan_tags["final_app_service_id"] = orphan_tags.apply(
+    pick_orphaned_appsvc, axis=1
+)
+
+# for orphaned rows we also want AppSvc columns filled
+orphan_tags["billing_owner_appsvcid"] = orphan_tags["final_app_service_id"]
+orphan_tags["support_owner_appsvcid"] = orphan_tags["final_app_service_id"]
+
