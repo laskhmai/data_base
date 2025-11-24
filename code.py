@@ -463,3 +463,69 @@ def pick_owner_appid(row: pd.Series):
 # APPLY FIX FOR BOTH BILLING & SUPPORT OWNER APPID
 final_df["billing_owner_appid"] = final_df.apply(pick_owner_appid, axis=1)
 final_df["support_owner_appid"] = final_df["billing_owner_appid"]
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ======================================================
+#      EAPM FALLBACK (from SnowNormalizedStaging)
+# ======================================================
+
+# Build EAPM lookup from apps_df (Snow)
+eapm = apps_df[["EapmId", "AppOwner", "AppOwnerEmail"]].copy()
+eapm = eapm.dropna(subset=["EapmId"])
+
+# normalize keys
+eapm["eapm_key"] = eapm["EapmId"].astype(str).str.strip().str.lower()
+
+# build name/email lookup
+eapm_name_lookup = (
+    eapm.drop_duplicates("eapm_key").set_index("eapm_key")["AppOwner"]
+)
+eapm_email_lookup = (
+    eapm.drop_duplicates("eapm_key").set_index("eapm_key")["AppOwnerEmail"]
+)
+
+# helper to normalize ids
+def norm_id(val):
+    if pd.isna(val):
+        return None
+    return str(val).strip().lower()
+
+# normalize appsvcid columns for lookup
+final_df["billing_eapm_key"] = final_df["billing_owner_appsvcid"].apply(norm_id)
+final_df["support_eapm_key"]  = final_df["support_owner_appsvcid"].apply(norm_id)
+
+# fill BILLING owner name from EAPM
+final_df["billing_owner_name"] = final_df["billing_owner_name"].where(
+    final_df["billing_owner_name"].notna(),
+    final_df["billing_eapm_key"].map(eapm_name_lookup)
+)
+
+# fill BILLING owner email from EAPM
+final_df["billing_owner_email"] = final_df["billing_owner_email"].where(
+    final_df["billing_owner_email"].notna(),
+    final_df["billing_eapm_key"].map(eapm_email_lookup)
+)
+
+# fill SUPPORT owner name from EAPM
+final_df["support_owner_name"] = final_df["support_owner_name"].where(
+    final_df["support_owner_name"].notna(),
+    final_df["support_eapm_key"].map(eapm_name_lookup)
+)
+
+# fill SUPPORT owner email from EAPM
+final_df["support_owner_email"] = final_df["support_owner_email"].where(
+    final_df["support_owner_email"].notna(),
+    final_df["support_eapm_key"].map(eapm_email_lookup)
+)
+ 
