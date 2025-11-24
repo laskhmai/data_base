@@ -529,3 +529,58 @@ final_df["support_owner_email"] = final_df["support_owner_email"].where(
     final_df["support_eapm_key"].map(eapm_email_lookup)
 )
  
+
+
+
+
+
+# after invalid_ids = {...} and after you have apps_df / snow_df loaded
+valid_eapm_ids = set(
+    apps_df.get("EapmId")  # or SnowNormalizedStaging DF – whichever you’re using
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .unique()
+)
+
+
+
+
+
+
+    # ---------- orphan reason ----------
+    orig_orphan = int(row.get("original_is_orphaned") or 0)
+
+    final_id_raw = row.get("final_app_service_id")
+    final_id = normalize_str(final_id_raw)
+
+    app_name = normalize_str(row.get("application_name"))
+    owner_name = normalize_str(row.get("billing_owner_name"))
+    has_valid_appsvc = final_id.startswith(("app", "bsn"))
+    has_person_or_app = bool(app_name or owner_name)
+
+    if orig_orphan == 0:
+        final_orphan = 0
+        orphan_reason = None
+    else:
+        if has_valid_appsvc and has_person_or_app:
+            final_orphan = 0
+            orphan_reason = "resolved_via_tags"
+        else:
+            # still orphaned
+            final_orphan = 1
+
+            # 1) SPECIAL CASE: EAPM-style numeric ID that is NOT in Snow
+            # here we look at the appid columns which are storing EAPM IDs (18034 etc)
+            eapm_val = normalize_str(
+                row.get("billing_owner_appid") or row.get("support_owner_appid")
+            )
+            if eapm_val and eapm_val not in invalid_ids and eapm_val not in valid_eapm_ids:
+                orphan_reason = "invalid_eapm_id"
+
+            # 2) Normal cases
+            elif not final_id or final_id in invalid_ids:
+                orphan_reason = "missing_tags"
+            else:
+                orphan_reason = "no_tags"
