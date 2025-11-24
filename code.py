@@ -858,3 +858,40 @@ def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
 
     # nothing usable
     return None
+
+
+
+
+from typing import Optional
+
+def pick_orphaned_appsvc(row: pd.Series) -> Optional[str]:
+    """
+    For ORPHANED rows only:
+    1) Prefer primary_appservice_4_1 (from 4.1 table)
+    2) Else use tags.app_service_id if present & not invalid
+    3) Else, if tags.app_id is present & not invalid, use that
+       (this is your "fall back to AppID" behavior)
+    """
+
+    # 1. primary from 4.1
+    primary = row.get("primary_appservice_4_1")
+    primary_norm = normalize_str(primary)
+    if primary_norm and primary_norm not in invalid_ids:
+        # keep the original formatting (APP0001704 etc.)
+        return str(primary).strip()
+
+    # 2. app_service_id from tags
+    tag_appsvc = row.get("app_service_id")
+    tag_appsvc_norm = normalize_str(tag_appsvc)
+    if tag_appsvc_norm and tag_appsvc_norm not in invalid_ids:
+        return str(tag_appsvc).strip()
+
+    # 3. NEW: fall back to app_id when app_service_id is null
+    tag_appid = row.get("app_id")
+    tag_appid_norm = normalize_str(tag_appid)
+    if tag_appid_norm and tag_appid_norm not in invalid_ids:
+        # this is where 18034 etc. become the "final_app_service_id"
+        return str(tag_appid).strip()
+
+    # 4. nothing usable
+    return None
