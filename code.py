@@ -83,3 +83,82 @@ final_df.loc[mask_fix_support, 'support_owner_email'] = (
         .astype(str).str.strip().str.lower()
         .map(snow_email_lookup)
 )
+
+
+
+
+
+
+
+
+
+import re
+
+def looks_like_naming_pattern(val: str) -> bool:
+    """
+    True for IDs that contain digits but are NOT pure numeric EAPM IDs.
+    Examples: 'EAPM-123', 'AA13360', 'id18034'
+    """
+    if not val:
+        return False
+    v = val.strip().lower()
+    # must contain at least one digit
+    if re.search(r'\d', v):
+        # but not be a pure numeric EAPM ID
+        return not v.isdigit()
+    return False
+
+def looks_like_email(val: str) -> bool:
+    """
+    True for typical email shapes.
+    """
+    if not val:
+        return False
+    v = val.strip().lower()
+    return "@" in v and "." in v.split("@")[-1]
+
+def looks_like_name(val: str) -> bool:
+    """
+    True for human-name-like strings (letters + a space).
+    """
+    if not val:
+        return False
+    v = val.strip()
+    return (" " in v) and any(c.isalpha() for c in v)
+
+
+
+
+
+
+if orig_orphan == 1:
+    final_id_raw  = row.get("final_app_service_id")
+    final_id_norm = normalize_str(final_id_raw)
+
+    # CASE 1: EAPM MATCH FOUND (numeric AND present in Snow)
+    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
+        method = "Resource Tags EAPMID"
+        confidence = 100
+        orphan_reason = None
+
+    # CASE 2: Naming pattern (EAPM-123, AA13360, alphanumeric, email, or name)
+    elif (
+        looks_like_naming_pattern(final_id_norm)
+        or looks_like_email(final_id_norm)
+        or looks_like_name(final_id_norm)
+    ):
+        method = "Virtual Tagging Naming Pattern"
+        confidence = 40
+        orphan_reason = "invalid"
+
+    # CASE 3: Resource Tag ID match (app / bsn)
+    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
+        method = "Virtual Tagging Resource Tag"
+        confidence = 60
+        orphan_reason = "resource_tag_match"
+
+    # CASE 4: Unmapped
+    else:
+        method = None
+        confidence = 0
+        orphan_reason = "NoTag"
