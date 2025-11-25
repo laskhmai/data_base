@@ -976,3 +976,56 @@ final_df.loc[mask_eapm, "department"] = (
     final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup)
       .combine_first(final_df.loc[mask_eapm, "department"])
 )
+
+
+
+
+
+
+
+
+
+
+
+
+# ---------- Ownership Method ----------
+if orig_orphan == 1:
+
+    # CASE 1: EAPM MATCH FOUND
+    if str(final_id).isdigit() and row.get("eapm_key"):
+        method = "APM via EAPM ID"
+        confidence = 60
+        orphan_reason = "valid_eapm_match"
+
+    # CASE 2: Naming pattern (numeric appid) but NOT in EAPM
+    elif str(final_id).isdigit():
+        method = "APM via Naming Pattern"
+        confidence = 30
+        orphan_reason = "invalid_eapm_id"
+
+    # CASE 3: Resource Tag ID match (app / bsn)
+    elif billing_id.startswith(("app","bsn")) or support_id.startswith(("app","bsn")):
+        method = "APM via Resource Tag ID"
+        confidence = 100
+        orphan_reason = "resource_tag_match"
+
+    # CASE 4: Unmapped
+    else:
+        method = "unmapped"
+        confidence = 0
+        orphan_reason = "missing_tags"
+
+# ---------- Non-Orphan logic ----------
+else:
+    if owner_source == "resourcetag":
+        method = "APM via Resource Owner Tag"
+        confidence = 100
+    elif owner_source == "rginherited":
+        method = "APM via RG Tag Inference"
+        confidence = 80
+    elif billing_id.startswith(("app","bsn")) or support_id.startswith(("app","bsn")):
+        method = "APM via Resource Tag ID"
+        confidence = 100
+    else:
+        method = "APM via Naming Pattern"
+        confidence = 60
