@@ -162,3 +162,12 @@ if orig_orphan == 1:
         method = None
         confidence = 0
         orphan_reason = "NoTag"
+
+
+elif final_id_norm and (
+        final_id_norm.isdigit() or
+        re.match(r'^[A-Za-z]+[-]?\d+$', final_id_norm)
+    ):
+    method = "Virtual Tagging Naming Pattern"
+    confidence = 40
+    orphan_reason = "invalid"
