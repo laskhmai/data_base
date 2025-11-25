@@ -1029,3 +1029,38 @@ else:
     else:
         method = "APM via Naming Pattern"
         confidence = 60
+
+
+
+
+
+
+
+
+f orig_orphan == 1:
+    final_id_raw = row.get("final_app_service_id")
+    final_id_norm = normalize_str(final_id_raw)
+
+    # CASE 1: EAPM MATCH FOUND (numeric AND present in Snow)
+    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
+        method = "APM via EAPM ID"
+        confidence = 60
+        orphan_reason = "valid_eapm_match"
+
+    # CASE 2: Naming pattern (numeric appid) but NOT in EAPM
+    elif final_id_norm and final_id_norm.isdigit():
+        method = "APM via Naming Pattern"
+        confidence = 30
+        orphan_reason = "invalid_eapm_id"
+
+    # CASE 3: Resource Tag ID match (app / bsn)
+    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
+        method = "APM via Resource Tag ID"
+        confidence = 100
+        orphan_reason = "resource_tag_match"
+
+    # CASE 4: Unmapped
+    else:
+        method = "unmapped"
+        confidence = 0
+        orphan_reason = "missing_tags"
