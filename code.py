@@ -897,3 +897,82 @@ final_df.loc[mask_eapm, "department"] = (
     final_df.loc[mask_eapm, "department"]
         .combine_first(final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup))
 )
+
+
+
+
+
+
+
+
+
+
+
+# --------------------------------------------------------
+# Build EAPM lookup from apps_df (SnowNormalizedStaging)
+# --------------------------------------------------------
+eapm_map = apps_df[["EapmId", "AppOwner", "AppOwnerEmail",
+                    "BusinessUnit", "Department"]].copy()
+
+# normalize EapmId -> key
+eapm_map["eapm_key"] = eapm_map["EapmId"].astype(str).str.strip().str.lower()
+eapm_map = eapm_map.drop_duplicates(subset=["eapm_key"])
+
+# simple lookup dicts
+eapm_name_lookup  = eapm_map.set_index("eapm_key")["AppOwner"]
+eapm_email_lookup = eapm_map.set_index("eapm_key")["AppOwnerEmail"]
+eapm_bu_lookup    = eapm_map.set_index("eapm_key")["BusinessUnit"]
+eapm_dept_lookup  = eapm_map.set_index("eapm_key")["Department"]
+
+
+# helper to normalize IDs, but only treat pure digits as EAPM
+def norm_id(val):
+    if pd.isna(val):
+        return None
+    v = str(val).strip().lower()
+    # only numeric strings like 18034, 17535 are EAPM ids
+    if v.isdigit():
+        return v
+    return None
+
+# key based on the final app id we chose (from tags/orphan logic)
+final_df["eapm_key"] = final_df["final_app_service_id"].apply(norm_id)
+
+# only override where we actually have a match AND row is orphaned
+mask_eapm = final_df["eapm_key"].notna() & (final_df["is_orphaned"] == 1)
+
+# ---------- OVERRIDE FIELDS FROM EAPM (Snow) ----------
+# IMPORTANT: EAPM (Snow) is left side of combine_first, so it wins
+
+# owner NAME
+final_df.loc[mask_eapm, "billing_owner_name"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup)
+      .combine_first(final_df.loc[mask_eapm, "billing_owner_name"])
+)
+
+final_df.loc[mask_eapm, "support_owner_name"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_name_lookup)
+      .combine_first(final_df.loc[mask_eapm, "support_owner_name"])
+)
+
+# owner EMAIL
+final_df.loc[mask_eapm, "billing_owner_email"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup)
+      .combine_first(final_df.loc[mask_eapm, "billing_owner_email"])
+)
+
+final_df.loc[mask_eapm, "support_owner_email"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_email_lookup)
+      .combine_first(final_df.loc[mask_eapm, "support_owner_email"])
+)
+
+# Business Unit + Department
+final_df.loc[mask_eapm, "business_unit"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_bu_lookup)
+      .combine_first(final_df.loc[mask_eapm, "business_unit"])
+)
+
+final_df.loc[mask_eapm, "department"] = (
+    final_df.loc[mask_eapm, "eapm_key"].map(eapm_dept_lookup)
+      .combine_first(final_df.loc[mask_eapm, "department"])
+)
