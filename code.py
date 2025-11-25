@@ -247,3 +247,41 @@ def insert_batch(batch, insert_sql):
 
     return df
 
+
+
+
+
+
+
+
+
+
+
+
+
+except Exception as e:
+    print("❌ Error in batch, checking rows one by one...")
+
+    with connect(hybridase1_server, hybridase1_database,
+                 hybridase1_username, hybridase1_password) as con2:
+
+        cur2 = con2.cursor()
+        cur2.fast_executemany = False
+
+        for i, row in enumerate(batch):
+            try:
+                cur2.execute(insert_sql, row)
+            except Exception as e2:
+                print("\n🔴 BAD ROW FOUND AT INDEX:", i)
+                print("SQL ERROR:", e2)
+                print("ROW VALUES:", row)
+
+                # print names + value + type
+                print("\nCOLUMN DEBUG:")
+                for col_name, val in zip(gold_df.columns, row):
+                    print(f"{col_name}: {val}  (type={type(val)})")
+
+                return "❌ Batch contained invalid data"
+
+        print("⚠ No row failed but batch failed — unknown issue!")
+        return "❌ Batch failed"
