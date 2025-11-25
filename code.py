@@ -171,3 +171,29 @@ elif final_id_norm and (
     method = "Virtual Tagging Naming Pattern"
     confidence = 40
     orphan_reason = "invalid"
+
+
+def insert_batch(batch, insert_sql):
+    try:
+        with connect(hybridsa1_server, hybridsa1_database,
+                     hybridsa1_username, hybridsa1_password) as con:
+            cur = con.cursor()
+            cur.fast_executemany = True
+            cur.executemany(insert_sql, batch)
+            con.commit()
+        return f"Inserted {len(batch)} rows"
+    except Exception as e:
+        print("Batch failed, checking rows one by one...", e)
+        with connect(hybridsa1_server, hybridsa1_database,
+                     hybridsa1_username, hybridsa1_password) as con:
+            cur = con.cursor()
+            cur.fast_executemany = False
+            for i, row in enumerate(batch):
+                try:
+                    cur.execute(insert_sql, row)
+                except Exception as e2:
+                    print("❌ Bad row index in DataFrame:", row[0] if row else i)
+                    print("Error:", e2)
+                    print("Row values:", row)
+                    break  # stop at first bad row
+        return "Batch contained invalid data"
