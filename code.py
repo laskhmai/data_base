@@ -197,3 +197,53 @@ def insert_batch(batch, insert_sql):
                     print("Row values:", row)
                     break  # stop at first bad row
         return "Batch contained invalid data"
+    
+
+
+
+
+
+
+
+
+
+    def clean_types(df):
+    # Fix numeric columns
+    numeric_cols = [
+        "ownership_confidence_score",
+        "is_orphaned",
+        "is_deleted",
+        "has_conflicting_tags"
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                .fillna(0)
+                .astype(str)
+                .str.extract(r'(\d+)')   # keep numeric only
+                .fillna(0)
+                .astype(int)
+            )
+
+    # Fix app IDs
+    id_cols = [
+        "billing_owner_appsvcid",
+        "support_owner_appsvcid",
+        "billing_owner_appid",
+        "support_owner_appid"
+    ]
+
+    for col in id_cols:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.extract(r'(\d+)')  # keep only digits (remove EAPM-123 etc.)
+                .fillna(0)
+                .astype(int)
+            )
+
+    return df
+
