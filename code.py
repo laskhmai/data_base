@@ -285,3 +285,72 @@ except Exception as e:
 
         print("⚠ No row failed but batch failed — unknown issue!")
         return "❌ Batch failed"
+
+
+
+
+print("DataFrame columns:", len(gold_df.columns))
+print("Placeholders in insert_sql:", insert_sql.count("?"))
+print("Columns list:", list(gold_df.columns))
+
+
+
+
+
+
+
+
+CREATE TABLE dbo.your_table_name (
+    u_id nvarchar(1000) NULL,
+    resource_id nvarchar(1000) NULL,
+    resource_name nvarchar(1000) NULL,
+    resource_type_standardized nvarchar(1000) NULL,
+    cloud_provider nvarchar(1000) NULL,
+    cloud_account_id nvarchar(1000) NULL,
+    cloud_account_name nvarchar(1000) NULL,
+    region nvarchar(1000) NULL,
+    environment nvarchar(1000) NULL,
+
+    billing_owner_appsvcid nvarchar(1000) NULL,
+    support_owner_appsvcid nvarchar(1000) NULL,
+
+    billing_owner_appid nvarchar(1000) NULL,
+    support_owner_appid nvarchar(1000) NULL,
+
+    application_name nvarchar(1000) NULL,
+
+    billing_owner_email nvarchar(1000) NULL,
+    support_owner_email nvarchar(1000) NULL,
+
+    billing_owner_name nvarchar(1000) NULL,
+    support_owner_name nvarchar(1000) NULL,
+
+    business_unit nvarchar(1000) NULL,
+    department nvarchar(1000) NULL,
+
+    is_platform_managed bit NULL,
+    management_model nvarchar(1000) NULL,
+    platform_team_name nvarchar(1000) NULL,
+
+    ownership_confidence_score int NULL,
+    ownership_determination_method nvarchar(1000) NULL,
+
+    is_orphaned bit NULL,
+    is_deleted bit NULL,
+    orphan_reason nvarchar(1000) NULL,
+
+    has_conflicting_tags bit NULL,
+    dependency_triggered_update bit NULL,
+
+    hash_key nvarchar(1000) NULL,
+    audit_id nvarchar(1000) NULL,
+
+    change_category nvarchar(500) NULL,
+
+    resource_created_date datetime2(7) NULL,
+    mapping_created_date datetime2(7) NULL,
+    last_verified_date datetime2(7) NULL,
+    last_modified_date datetime2(7) NULL,
+
+    is_current bit NULL
+);
