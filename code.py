@@ -413,3 +413,59 @@ elif method in ("Virtual Tagging Naming Pattern",
     # still “virtual” ownership, mark as 2
     final_orphan = 2
 # else: leave final_orphan as orig_orphan
+
+
+
+
+
+
+
+
+
+# ---------- Ownership Method ----------
+if orig_orphan == 1:
+
+    # resolve an ID (EAPMID or tag-based)
+    final_id_raw = (
+        row.get("final_app_service_id")
+        or row.get("billing_owner_appsvcid")
+        or row.get("support_owner_appsvcid")
+    )
+    final_id_norm = normalize_str(final_id_raw)
+
+    # CASE 1: Direct EAPMID match in Snow
+    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
+        method = "Resource Tags EAPMID"
+        confidence = 100
+        final_orphan = 0  # fully resolved
+        orphan_reason = None
+
+    # CASE 2: Naming/Email/Numeric-but-not-in-Snow --> 40
+    elif (
+        final_id_norm
+        and (
+            looks_like_naming_pattern(final_id_norm)
+            or looks_like_email(final_id_norm)
+            or looks_like_name(final_id_norm)
+            or final_id_norm.isdigit()  # numeric but NOT in SNOW
+        )
+        and not final_id_norm in valid_eapm_ids
+    ):
+        method = "Virtual Tagging Naming Pattern"
+        confidence = 40
+        final_orphan = 2
+        orphan_reason = "invalid_eapm_id"
+
+    # CASE 3: app / bsn tag match -> 60
+    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
+        method = "Virtual Tagging Resource Tag"
+        confidence = 60
+        final_orphan = 2
+        orphan_reason = None
+
+    # CASE 4: Unmapped -> 0
+    else:
+        method = None
+        confidence = 0
+        final_orphan = 1
+        orphan_reason = "NoTag"
