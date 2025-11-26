@@ -354,3 +354,62 @@ CREATE TABLE dbo.your_table_name (
 
     is_current bit NULL
 );
+
+
+
+
+
+
+
+
+
+# ---------- Ownership Method ----------
+if orig_orphan == 1:
+    final_id_raw  = row.get("final_app_service_id")
+    final_id_norm = normalize_str(final_id_raw)
+
+    # CASE 1: EAPM MATCH FOUND (numeric AND present in Snow)
+    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
+        method        = "Resource Tags EAPMID"
+        confidence    = 100
+        orphan_reason = None
+
+    # CASE 2: Resource Tag ID match (app / bsn)  ***MOVED UP***
+    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
+        method        = "Virtual Tagging Resource Tag"
+        confidence    = 60
+        orphan_reason = None
+
+    # CASE 3: Naming pattern (numeric appid) but NOT in EAPM
+    elif looks_like_naming_pattern(final_id_norm) \
+         or looks_like_email(final_id_norm) \
+         or looks_like_name(final_id_norm) \
+         or (final_id_norm and not final_id_norm.isdigit()
+             and re.match(r'^[A-Za-z]+?-?\d+$', final_id_norm)):
+        method        = "Virtual Tagging Naming Pattern"
+        confidence    = 40
+        orphan_reason = "invalid"
+
+    # CASE 4: Unmapped
+    else:
+        method        = None
+        confidence    = 0
+        orphan_reason = "NoTag"
+
+
+
+
+
+
+# ---------- final orphan flag (new rules) ----------
+# start from original flag
+final_orphan = orig_orphan
+
+if method == "Resource Tags EAPMID":
+    # direct EAPMID match in Snow => fully resolved
+    final_orphan = 0
+elif method in ("Virtual Tagging Naming Pattern",
+                "Virtual Tagging Resource Tag"):
+    # still “virtual” ownership, mark as 2
+    final_orphan = 2
+# else: leave final_orphan as orig_orphan
