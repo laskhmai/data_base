@@ -469,3 +469,19 @@ if orig_orphan == 1:
         confidence = 0
         final_orphan = 1
         orphan_reason = "NoTag"
+
+
+
+
+import pandas as pd
+
+# NEW: safe reader that loads SQL results in chunks
+def read_sql_df(conn, sql, chunksize=50000):
+    """
+    Read a SQL query in chunks to avoid MemoryError.
+    Returns a single DataFrame.
+    """
+    chunks = []
+    for chunk in pd.read_sql(sql, conn, chunksize=chunksize):
+        chunks.append(chunk)
+    return pd.concat(chunks, ignore_index=True)
