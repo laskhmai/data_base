@@ -223,26 +223,54 @@ GO
 
 
 
-CREATE TABLE [Gold].[VTAG_ResourceOwnerMapping_Staging] (
-    ResourceId                      NVARCHAR(900)   NOT NULL,
-    Environment                     NVARCHAR(50)    NULL,
-    Billing_Owner_AppSvcId          NVARCHAR(50)    NULL,
-    Support_Owner_AppSvcId          NVARCHAR(50)    NULL,
-    Billing_Owner_AppId             NVARCHAR(50)    NULL,
-    Support_Owner_AppId             NVARCHAR(50)    NULL,
-    Application_Name                NVARCHAR(255)   NULL,
-    Billing_Owner_Name              NVARCHAR(255)   NULL,
-    Support_Owner_Name              NVARCHAR(255)   NULL,
-    Business_Unit                   NVARCHAR(100)   NULL,
-    Department                      NVARCHAR(100)   NULL,
-    Management_Model                NVARCHAR(50)    NULL,
-    Is_Platform_Managed             BIT             NULL,
-    Platform_Team_Name              NVARCHAR(255)   NULL,
-    Ownership_Determination_Method  NVARCHAR(100)   NULL,
-    Ownership_Confidence_Score      INT             NULL,
-    Is_Orphaned                     TINYINT         NOT NULL DEFAULT (0),
-    Is_Deleted                      BIT             NOT NULL DEFAULT (0),
-    Orphan_Reason                   NVARCHAR(200)   NULL,
-    Hash_Key                        CHAR(64)        NOT NULL  -- Python will compute same SHA256 here
+CCREATE TABLE [Gold].[VTAG_ResourceOwnerMapping_Staging] (
+    ResourceId                      NVARCHAR(900)    NOT NULL,
+    ResourceName                    NVARCHAR(500)    NULL,
+    ResourceType                    NVARCHAR(200)    NULL,
+    CloudProvider                   NVARCHAR(50)     NULL,
+    CloudAccountId                  NVARCHAR(200)    NULL,
+    AccountName                     NVARCHAR(500)    NULL,
+    ResourceGroupName               NVARCHAR(500)    NULL,
+    Region                          NVARCHAR(100)    NULL,
+    Environment                     NVARCHAR(50)     NULL,
+
+    Billing_Owner_AppSvcId          NVARCHAR(200)    NULL,
+    Support_Owner_AppSvcId          NVARCHAR(200)    NULL,
+    Billing_Owner_AppId             NVARCHAR(200)    NULL,
+    Support_Owner_AppId             NVARCHAR(200)    NULL,
+
+    Application_Name                NVARCHAR(500)    NULL,
+    Billing_Owner_Name              NVARCHAR(500)    NULL,
+    Support_Owner_Name              NVARCHAR(500)    NULL,
+
+    Business_Unit                   NVARCHAR(200)    NULL,
+    Department                      NVARCHAR(200)    NULL,
+
+    ResHumanaResourceID             NVARCHAR(200)    NULL,
+    ResHumanaConsumerID             NVARCHAR(200)    NULL,
+    RgHumanaResourceID              NVARCHAR(200)    NULL,
+    RgHumanaConsumerID              NVARCHAR(200)    NULL,
+    EffectiveHumanaResourceId       NVARCHAR(200)    NULL,
+    EffectiveHumanaConsumerId       NVARCHAR(200)    NULL,
+
+    Management_Model                NVARCHAR(50)     NULL,
+    Is_Platform_Managed             BIT              NULL,
+    Platform_Team_Name              NVARCHAR(200)    NULL,
+
+    Ownership_Determination_Method  NVARCHAR(200)    NULL,
+    Ownership_Confidence_Score      INT              NULL,
+    Is_Orphaned                     TINYINT          NOT NULL DEFAULT (0),
+    Orphan_Reason                   NVARCHAR(200)    NULL,
+
+    Is_Deleted                      BIT              NOT NULL DEFAULT (0),
+
+    HasConflictingTags              BIT              NULL,
+    DependencyTriggeredUpdate       BIT              NULL,
+    TagQualityScore                 INT              NULL,
+    ResTags                         NVARCHAR(MAX)    NULL,
+    RgTags                          NVARCHAR(MAX)    NULL,
+
+    Hash_Key                        CHAR(64)         NOT NULL
 );
 GO
+
