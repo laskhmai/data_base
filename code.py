@@ -1,487 +1,217 @@
-SELECT 
-    f.resource_id,
-    f.final_app_service_id,
-    f.billing_owner_name,
-    f.billing_owner_email,
-    f.ownership_determination_method,
-    f.ownership_confidence_score,
-    f.orphan_reason,
-    s.EapmId,
-    s.AppOwner,
-    s.AppOwnerEmail
-FROM [AZURE].[Final_Gold_Resources] f
-LEFT JOIN [Silver].[SnowNormalizedStaging] s
-    ON TRY_CONVERT(int, f.final_app_service_id) = s.EapmId
-WHERE f.is_orphaned = 1
-  AND f.ownership_determination_method = 'APM via EAPM ID';
+ALTER PROC [Gold].[usp_VTAG_ResourceOwnerMapping_Upsert]
+AS
+BEGIN
+    SET NOCOUNT ON;
 
+    DECLARE @UTCNow DATETIME = GETUTCDATE();
 
+    -- Cleanup temp if it exists
+    IF OBJECT_ID('tempdb..#Compare_GoldOwner') IS NOT NULL
+        DROP TABLE #Compare_GoldOwner;
 
-SELECT 
-    f.resource_id,
-    f.final_app_service_id,
-    f.billing_owner_name,
-    f.billing_owner_email,
-    f.ownership_determination_method,
-    f.ownership_confidence_score,
-    f.orphan_reason,
-    s.EapmId
-FROM [AZURE].[Final_Gold_Resources] f
-LEFT JOIN [Silver].[SnowNormalizedStaging] s
-    ON TRY_CONVERT(int, f.final_app_service_id) = s.EapmId
-WHERE f.is_orphaned = 1
-  AND f.ownership_determination_method = 'APM via Naming Pattern'
-  AND f.orphan_reason = 'invalid_eapm_id';
+    BEGIN TRY
+        BEGIN TRAN;
 
+        --------------------------------------------------------------------
+        -- Only run if staging table has data
+        --------------------------------------------------------------------
+        IF EXISTS (SELECT 1 FROM [Silver].[VTAG_ResourceOwnerMapping_Staging])
+        BEGIN
+            PRINT 'Comparing incoming and existing Gold owner records...';
 
+            ----------------------------------------------------------------
+            -- 1. Build compare table  (incoming vs existing)
+            ----------------------------------------------------------------
+            SELECT
+                -- business key (adjust to your real key!)
+                s.ResourceId,
+                -- if key is AccountId instead, replace both places
 
-SELECT *
-FROM [AZURE].[Final_Gold_Resources]
-WHERE is_orphaned = 1
-  AND ownership_determination_method = 'APM via Resource Tag ID';
+                -- incoming columns from staging
+                s.Environment,
+                s.Billing_Owner_AppSvcId,
+                s.Support_Owner_AppSvcId,
+                s.Billing_Owner_AppId,
+                s.Support_Owner_AppId,
+                s.Application_Name,
+                s.Billing_Owner_Name,
+                s.Support_Owner_Name,
+                s.Business_Unit,
+                s.Department,
+                s.Management_Model,
+                s.Is_Platform_Managed,
+                s.Platform_Team_Name,
+                s.Ownership_Determination_Method,
+                s.Ownership_Confidence_Score,
+                s.Is_Orphaned,
+                s.Is_Deleted,
+                s.Orphan_Reason,
+                s.Hash_Key          AS New_HashKey,
 
+                -- existing columns (may be NULL)
+                g.ResourceId        AS Existing_ResourceId,
+                g.Hash_Key          AS Existing_HashKey,
+                g.Is_Deleted        AS Existing_IsDeleted
+            INTO #Compare_GoldOwner
+            FROM [Silver].[VTAG_ResourceOwnerMapping_Staging] s
+            LEFT JOIN [Gold].[VTAG_ResourceOwnerMapping] g
+                ON s.ResourceId = g.ResourceId;      -- <== adjust key here
 
+            ----------------------------------------------------------------
+            -- 2. Mark Deleted rows (exist in Gold but now flagged deleted)
+            ----------------------------------------------------------------
+            PRINT 'Deleted Gold owner records...';
 
+            UPDATE g
+            SET
+                g.Is_Deleted      = 1,
+                g.Is_Current      = 0,
+                g.Change_Category = 'Deleted',
+                g.Processing_Date = @UTCNow
+            FROM [Gold].[VTAG_ResourceOwnerMapping] g
+            INNER JOIN #Compare_GoldOwner c
+                ON g.ResourceId = c.ResourceId
+            WHERE c.Existing_ResourceId IS NOT NULL
+                  AND c.New_HashKey IS NULL;  -- not present in staging anymore
+            -- (If you prefer "soft delete when Is_Deleted=1 in staging"
+            -- change the WHERE to use c.Is_Deleted = 1 instead.)
 
-# ---------------------------------------------------------
-# FIX: If owner name exists but email is NULL, fill from Snow (EAPM)
-# ---------------------------------------------------------
+            ----------------------------------------------------------------
+            -- 3. Verified rows (same hash = no change, just seen again)
+            ----------------------------------------------------------------
+            PRINT 'Verified Gold owner records...';
 
-# Build lookup of Name -> Email from EAPM
-snow_email_lookup = (
-    apps_df[['AppOwner', 'AppOwnerEmail']]
-        .dropna()
-        .astype(str)
-        .apply(lambda x: x.str.strip().str.lower())
-        .drop_duplicates()
-        .set_index('AppOwner')['AppOwnerEmail']
-        .to_dict()
-)
+            UPDATE g
+            SET
+                g.Last_Verified_Date = @UTCNow,
+                g.Processing_Date    = @UTCNow,
+                g.Change_Category    = 'Verified'
+            FROM [Gold].[VTAG_ResourceOwnerMapping] g
+            INNER JOIN #Compare_GoldOwner c
+                ON g.ResourceId = c.ResourceId
+            WHERE c.Existing_HashKey = c.New_HashKey
+                  AND c.New_HashKey IS NOT NULL
+                  AND g.Is_Deleted = 0;
 
-# Fix billing owner email
-mask_fix_billing = (
-    final_df['billing_owner_name'].notna() &
-    final_df['billing_owner_name'].astype(str).str.strip().str.lower().isin(snow_email_lookup.keys()) &
-    (final_df['billing_owner_email'].isna() | (final_df['billing_owner_email'] == ""))
-)
+            ----------------------------------------------------------------
+            -- 4. Changed rows (same key, different hash)
+            ----------------------------------------------------------------
+            PRINT 'Upsert (update) changed Gold owner records...';
 
-final_df.loc[mask_fix_billing, 'billing_owner_email'] = (
-    final_df.loc[mask_fix_billing, 'billing_owner_name']
-        .astype(str).str.strip().str.lower()
-        .map(snow_email_lookup)
-)
+            UPDATE g
+            SET
+                g.Environment                     = c.Environment,
+                g.Billing_Owner_AppSvcId          = c.Billing_Owner_AppSvcId,
+                g.Support_Owner_AppSvcId          = c.Support_Owner_AppSvcId,
+                g.Billing_Owner_AppId             = c.Billing_Owner_AppId,
+                g.Support_Owner_AppId             = c.Support_Owner_AppId,
+                g.Application_Name                = c.Application_Name,
+                g.Billing_Owner_Name              = c.Billing_Owner_Name,
+                g.Support_Owner_Name              = c.Support_Owner_Name,
+                g.Business_Unit                   = c.Business_Unit,
+                g.Department                      = c.Department,
+                g.Management_Model                = c.Management_Model,
+                g.Is_Platform_Managed             = c.Is_Platform_Managed,
+                g.Platform_Team_Name              = c.Platform_Team_Name,
+                g.Ownership_Determination_Method  = c.Ownership_Determination_Method,
+                g.Ownership_Confidence_Score      = c.Ownership_Confidence_Score,
+                g.Is_Orphaned                     = c.Is_Orphaned,
+                g.Is_Deleted                      = c.Is_Deleted,
+                g.Orphan_Reason                   = c.Orphan_Reason,
+                g.Hash_Key                        = c.New_HashKey,
+                g.Change_Category                 = 'Updated',
+                g.Last_Modified_Date              = @UTCNow,
+                g.Processing_Date                 = @UTCNow,
+                g.Is_Current                      = 1
+            FROM [Gold].[VTAG_ResourceOwnerMapping] g
+            INNER JOIN #Compare_GoldOwner c
+                ON g.ResourceId = c.ResourceId
+            WHERE c.Existing_HashKey IS NOT NULL
+                  AND c.New_HashKey IS NOT NULL
+                  AND c.Existing_HashKey <> c.New_HashKey
+                  AND g.Is_Deleted = 0;
 
-# Fix support owner email
-mask_fix_support = (
-    final_df['support_owner_name'].notna() &
-    final_df['support_owner_name'].astype(str).str.strip().str.lower().isin(snow_email_lookup.keys()) &
-    (final_df['support_owner_email'].isna() | (final_df['support_owner_email'] == ""))
-)
+            ----------------------------------------------------------------
+            -- 5. Insert new rows (in staging, not in existing)
+            ----------------------------------------------------------------
+            PRINT 'Insert new Gold owner records...';
 
-final_df.loc[mask_fix_support, 'support_owner_email'] = (
-    final_df.loc[mask_fix_support, 'support_owner_name']
-        .astype(str).str.strip().str.lower()
-        .map(snow_email_lookup)
-)
-
-
-
-
-
-
-
-
-
-import re
-
-def looks_like_naming_pattern(val: str) -> bool:
-    """
-    True for IDs that contain digits but are NOT pure numeric EAPM IDs.
-    Examples: 'EAPM-123', 'AA13360', 'id18034'
-    """
-    if not val:
-        return False
-    v = val.strip().lower()
-    # must contain at least one digit
-    if re.search(r'\d', v):
-        # but not be a pure numeric EAPM ID
-        return not v.isdigit()
-    return False
-
-def looks_like_email(val: str) -> bool:
-    """
-    True for typical email shapes.
-    """
-    if not val:
-        return False
-    v = val.strip().lower()
-    return "@" in v and "." in v.split("@")[-1]
-
-def looks_like_name(val: str) -> bool:
-    """
-    True for human-name-like strings (letters + a space).
-    """
-    if not val:
-        return False
-    v = val.strip()
-    return (" " in v) and any(c.isalpha() for c in v)
-
-
-
-
-
-
-if orig_orphan == 1:
-    final_id_raw  = row.get("final_app_service_id")
-    final_id_norm = normalize_str(final_id_raw)
-
-    # CASE 1: EAPM MATCH FOUND (numeric AND present in Snow)
-    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
-        method = "Resource Tags EAPMID"
-        confidence = 100
-        orphan_reason = None
-
-    # CASE 2: Naming pattern (EAPM-123, AA13360, alphanumeric, email, or name)
-    elif (
-        looks_like_naming_pattern(final_id_norm)
-        or looks_like_email(final_id_norm)
-        or looks_like_name(final_id_norm)
-    ):
-        method = "Virtual Tagging Naming Pattern"
-        confidence = 40
-        orphan_reason = "invalid"
-
-    # CASE 3: Resource Tag ID match (app / bsn)
-    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
-        method = "Virtual Tagging Resource Tag"
-        confidence = 60
-        orphan_reason = "resource_tag_match"
-
-    # CASE 4: Unmapped
-    else:
-        method = None
-        confidence = 0
-        orphan_reason = "NoTag"
-
-
-elif final_id_norm and (
-        final_id_norm.isdigit() or
-        re.match(r'^[A-Za-z]+[-]?\d+$', final_id_norm)
-    ):
-    method = "Virtual Tagging Naming Pattern"
-    confidence = 40
-    orphan_reason = "invalid"
-
-
-def insert_batch(batch, insert_sql):
-    try:
-        with connect(hybridsa1_server, hybridsa1_database,
-                     hybridsa1_username, hybridsa1_password) as con:
-            cur = con.cursor()
-            cur.fast_executemany = True
-            cur.executemany(insert_sql, batch)
-            con.commit()
-        return f"Inserted {len(batch)} rows"
-    except Exception as e:
-        print("Batch failed, checking rows one by one...", e)
-        with connect(hybridsa1_server, hybridsa1_database,
-                     hybridsa1_username, hybridsa1_password) as con:
-            cur = con.cursor()
-            cur.fast_executemany = False
-            for i, row in enumerate(batch):
-                try:
-                    cur.execute(insert_sql, row)
-                except Exception as e2:
-                    print("❌ Bad row index in DataFrame:", row[0] if row else i)
-                    print("Error:", e2)
-                    print("Row values:", row)
-                    break  # stop at first bad row
-        return "Batch contained invalid data"
-    
-
-
-
-
-
-
-
-
-
-    def clean_types(df):
-    # Fix numeric columns
-    numeric_cols = [
-        "ownership_confidence_score",
-        "is_orphaned",
-        "is_deleted",
-        "has_conflicting_tags"
-    ]
-
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = (
-                df[col]
-                .fillna(0)
-                .astype(str)
-                .str.extract(r'(\d+)')   # keep numeric only
-                .fillna(0)
-                .astype(int)
+            INSERT INTO [Gold].[VTAG_ResourceOwnerMapping] (
+                ResourceId,
+                Environment,
+                Billing_Owner_AppSvcId,
+                Support_Owner_AppSvcId,
+                Billing_Owner_AppId,
+                Support_Owner_AppId,
+                Application_Name,
+                Billing_Owner_Name,
+                Support_Owner_Name,
+                Business_Unit,
+                Department,
+                Management_Model,
+                Is_Platform_Managed,
+                Platform_Team_Name,
+                Ownership_Determination_Method,
+                Ownership_Confidence_Score,
+                Is_Orphaned,
+                Is_Deleted,
+                Orphan_Reason,
+                Hash_Key,
+                Change_Category,
+                Created_Date,
+                Last_Verified_Date,
+                Last_Modified_Date,
+                Processing_Date,
+                Is_Current
             )
-
-    # Fix app IDs
-    id_cols = [
-        "billing_owner_appsvcid",
-        "support_owner_appsvcid",
-        "billing_owner_appid",
-        "support_owner_appid"
-    ]
-
-    for col in id_cols:
-        if col in df.columns:
-            df[col] = (
-                df[col]
-                .astype(str)
-                .str.extract(r'(\d+)')  # keep only digits (remove EAPM-123 etc.)
-                .fillna(0)
-                .astype(int)
-            )
-
-    return df
-
-
-
-
-
-
-
-
-
-
-
-
-
-except Exception as e:
-    print("❌ Error in batch, checking rows one by one...")
-
-    with connect(hybridase1_server, hybridase1_database,
-                 hybridase1_username, hybridase1_password) as con2:
-
-        cur2 = con2.cursor()
-        cur2.fast_executemany = False
-
-        for i, row in enumerate(batch):
-            try:
-                cur2.execute(insert_sql, row)
-            except Exception as e2:
-                print("\n🔴 BAD ROW FOUND AT INDEX:", i)
-                print("SQL ERROR:", e2)
-                print("ROW VALUES:", row)
-
-                # print names + value + type
-                print("\nCOLUMN DEBUG:")
-                for col_name, val in zip(gold_df.columns, row):
-                    print(f"{col_name}: {val}  (type={type(val)})")
-
-                return "❌ Batch contained invalid data"
-
-        print("⚠ No row failed but batch failed — unknown issue!")
-        return "❌ Batch failed"
-
-
-
-
-print("DataFrame columns:", len(gold_df.columns))
-print("Placeholders in insert_sql:", insert_sql.count("?"))
-print("Columns list:", list(gold_df.columns))
-
-
-
-
-
-
-
-
-CREATE TABLE dbo.your_table_name (
-    u_id nvarchar(1000) NULL,
-    resource_id nvarchar(1000) NULL,
-    resource_name nvarchar(1000) NULL,
-    resource_type_standardized nvarchar(1000) NULL,
-    cloud_provider nvarchar(1000) NULL,
-    cloud_account_id nvarchar(1000) NULL,
-    cloud_account_name nvarchar(1000) NULL,
-    region nvarchar(1000) NULL,
-    environment nvarchar(1000) NULL,
-
-    billing_owner_appsvcid nvarchar(1000) NULL,
-    support_owner_appsvcid nvarchar(1000) NULL,
-
-    billing_owner_appid nvarchar(1000) NULL,
-    support_owner_appid nvarchar(1000) NULL,
-
-    application_name nvarchar(1000) NULL,
-
-    billing_owner_email nvarchar(1000) NULL,
-    support_owner_email nvarchar(1000) NULL,
-
-    billing_owner_name nvarchar(1000) NULL,
-    support_owner_name nvarchar(1000) NULL,
-
-    business_unit nvarchar(1000) NULL,
-    department nvarchar(1000) NULL,
-
-    is_platform_managed bit NULL,
-    management_model nvarchar(1000) NULL,
-    platform_team_name nvarchar(1000) NULL,
-
-    ownership_confidence_score int NULL,
-    ownership_determination_method nvarchar(1000) NULL,
-
-    is_orphaned bit NULL,
-    is_deleted bit NULL,
-    orphan_reason nvarchar(1000) NULL,
-
-    has_conflicting_tags bit NULL,
-    dependency_triggered_update bit NULL,
-
-    hash_key nvarchar(1000) NULL,
-    audit_id nvarchar(1000) NULL,
-
-    change_category nvarchar(500) NULL,
-
-    resource_created_date datetime2(7) NULL,
-    mapping_created_date datetime2(7) NULL,
-    last_verified_date datetime2(7) NULL,
-    last_modified_date datetime2(7) NULL,
-
-    is_current bit NULL
-);
-
-
-
-
-
-
-
-
-
-# ---------- Ownership Method ----------
-if orig_orphan == 1:
-    final_id_raw  = row.get("final_app_service_id")
-    final_id_norm = normalize_str(final_id_raw)
-
-    # CASE 1: EAPM MATCH FOUND (numeric AND present in Snow)
-    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
-        method        = "Resource Tags EAPMID"
-        confidence    = 100
-        orphan_reason = None
-
-    # CASE 2: Resource Tag ID match (app / bsn)  ***MOVED UP***
-    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
-        method        = "Virtual Tagging Resource Tag"
-        confidence    = 60
-        orphan_reason = None
-
-    # CASE 3: Naming pattern (numeric appid) but NOT in EAPM
-    elif looks_like_naming_pattern(final_id_norm) \
-         or looks_like_email(final_id_norm) \
-         or looks_like_name(final_id_norm) \
-         or (final_id_norm and not final_id_norm.isdigit()
-             and re.match(r'^[A-Za-z]+?-?\d+$', final_id_norm)):
-        method        = "Virtual Tagging Naming Pattern"
-        confidence    = 40
-        orphan_reason = "invalid"
-
-    # CASE 4: Unmapped
-    else:
-        method        = None
-        confidence    = 0
-        orphan_reason = "NoTag"
-
-
-
-
-
-
-# ---------- final orphan flag (new rules) ----------
-# start from original flag
-final_orphan = orig_orphan
-
-if method == "Resource Tags EAPMID":
-    # direct EAPMID match in Snow => fully resolved
-    final_orphan = 0
-elif method in ("Virtual Tagging Naming Pattern",
-                "Virtual Tagging Resource Tag"):
-    # still “virtual” ownership, mark as 2
-    final_orphan = 2
-# else: leave final_orphan as orig_orphan
-
-
-
-
-
-
-
-
-
-# ---------- Ownership Method ----------
-if orig_orphan == 1:
-
-    # resolve an ID (EAPMID or tag-based)
-    final_id_raw = (
-        row.get("final_app_service_id")
-        or row.get("billing_owner_appsvcid")
-        or row.get("support_owner_appsvcid")
-    )
-    final_id_norm = normalize_str(final_id_raw)
-
-    # CASE 1: Direct EAPMID match in Snow
-    if final_id_norm and final_id_norm.isdigit() and final_id_norm in valid_eapm_ids:
-        method = "Resource Tags EAPMID"
-        confidence = 100
-        final_orphan = 0  # fully resolved
-        orphan_reason = None
-
-    # CASE 2: Naming/Email/Numeric-but-not-in-Snow --> 40
-    elif (
-        final_id_norm
-        and (
-            looks_like_naming_pattern(final_id_norm)
-            or looks_like_email(final_id_norm)
-            or looks_like_name(final_id_norm)
-            or final_id_norm.isdigit()  # numeric but NOT in SNOW
-        )
-        and not final_id_norm in valid_eapm_ids
-    ):
-        method = "Virtual Tagging Naming Pattern"
-        confidence = 40
-        final_orphan = 2
-        orphan_reason = "invalid_eapm_id"
-
-    # CASE 3: app / bsn tag match -> 60
-    elif billing_id.startswith(("app", "bsn")) or support_id.startswith(("app", "bsn")):
-        method = "Virtual Tagging Resource Tag"
-        confidence = 60
-        final_orphan = 2
-        orphan_reason = None
-
-    # CASE 4: Unmapped -> 0
-    else:
-        method = None
-        confidence = 0
-        final_orphan = 1
-        orphan_reason = "NoTag"
-
-
-
-
-import pandas as pd
-
-# NEW: safe reader that loads SQL results in chunks
-def read_sql_df(conn, sql, chunksize=50000):
-    """
-    Read a SQL query in chunks to avoid MemoryError.
-    Returns a single DataFrame.
-    """
-    chunks = []
-    for chunk in pd.read_sql(sql, conn, chunksize=chunksize):
-        chunks.append(chunk)
-    return pd.concat(chunks, ignore_index=True)
+            SELECT
+                c.ResourceId,
+                c.Environment,
+                c.Billing_Owner_AppSvcId,
+                c.Support_Owner_AppSvcId,
+                c.Billing_Owner_AppId,
+                c.Support_Owner_AppId,
+                c.Application_Name,
+                c.Billing_Owner_Name,
+                c.Support_Owner_Name,
+                c.Business_Unit,
+                c.Department,
+                c.Management_Model,
+                c.Is_Platform_Managed,
+                c.Platform_Team_Name,
+                c.Ownership_Determination_Method,
+                c.Ownership_Confidence_Score,
+                c.Is_Orphaned,
+                c.Is_Deleted,
+                c.Orphan_Reason,
+                c.New_HashKey,
+                'New'   AS Change_Category,
+                @UTCNow AS Created_Date,
+                @UTCNow AS Last_Verified_Date,
+                @UTCNow AS Last_Modified_Date,
+                @UTCNow AS Processing_Date,
+                1       AS Is_Current
+            FROM #Compare_GoldOwner c
+            WHERE c.Existing_ResourceId IS NULL;
+
+            ----------------------------------------------------------------
+            -- 6. Cleanup staging
+            ----------------------------------------------------------------
+            TRUNCATE TABLE [Silver].[VTAG_ResourceOwnerMapping_Staging];
+        END;  -- IF staging has rows
+
+        COMMIT TRAN;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRAN;
+
+        -- optional: log error info here (same style as your other procs)
+        DECLARE @ErrMsg NVARCHAR(4000), @ErrSeverity INT;
+        SELECT
+            @ErrMsg = ERROR_MESSAGE(),
+            @ErrSeverity = ERROR_SEVERITY();
+        RAISERROR(@ErrMsg, @ErrSeverity, 1);
+    END CATCH;
+END;
+GO
