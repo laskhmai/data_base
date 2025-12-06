@@ -211,3 +211,39 @@ SELECT
     , 'Active'           AS resource_status   -- you can later derive Active/Deleted
 FROM agg a;
 GO
+
+
+CREATE TABLE [Cloudability].[Daily_Spend_Aggregated]
+(
+    usage_date                DATE                               NULL,      -- Rule 1
+    resource_id               NVARCHAR(500)                       NULL,      -- Rule 2
+    vendor_account_name       NVARCHAR(250)                       NULL,      -- Rule 3
+    vendor                    NVARCHAR(250)                       NULL,      -- Rule 4
+
+    overall_amortized_spend   FLOAT                               NULL,      -- Rule 5
+
+    itemized_cost             NVARCHAR(MAX)                       NULL,      -- Rule 6 (JSON)
+
+    operations                NVARCHAR(MAX)                       NULL,      -- Rule 7 (array)
+
+    overall_usage             NVARCHAR(MAX)                       NULL,      -- Rule 8 (JSON)
+
+    overall_usgae_quantity    FLOAT                               NULL,      -- Rule 9 (sum of usage_quantity)
+
+    azure_resource_name       NVARCHAR(500)                       NULL,      -- Rule 10
+    azure_resource_group      NVARCHAR(500)                       NULL,      -- Rule 11
+    service_name              NVARCHAR(500)                       NULL,      -- Rule 12
+
+    usage_families            NVARCHAR(MAX)                       NULL,      -- Rule 13 (array)
+
+    usgae_types               NVARCHAR(MAX)                       NULL,      -- Rule 14 (array)
+
+    vendor_account_identifier NVARCHAR(250)                       NULL,      -- Rule 15
+    region                    NVARCHAR(250)                       NULL,      -- Rule 16
+    humana_application_id     NVARCHAR(250)                       NULL,      -- Rule 17
+    Humana_resource_id        NVARCHAR(250)                       NULL,      -- Rule 18
+
+    updated_date              DATETIME                            NULL,      -- Rule 19 (latest updated_date)
+    last_modified_date       DATE                                NULL       -- Rule 19 (current date)
+);
+GO
