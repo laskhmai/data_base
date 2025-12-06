@@ -247,3 +247,136 @@ CREATE TABLE [Cloudability].[Daily_Spend_Aggregated]
     last_modified_date       DATE                                NULL       -- Rule 19 (current date)
 );
 GO
+
+
+REATE OR ALTER PROCEDURE [Cloudability].[usp_Aggregate_Daily_Spend]
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    ----------------------------------------------------------------------------
+    -- OPTIONAL: Clear target table before reload (uncomment if you want this)
+    ----------------------------------------------------------------------------
+    -- TRUNCATE TABLE [Cloudability].[Daily_Spend_Aggregated];
+
+    ----------------------------------------------------------------------------
+    -- Insert aggregated data
+    ----------------------------------------------------------------------------
+    INSERT INTO [Cloudability].[Daily_Spend_Aggregated]
+    (
+          usage_date
+        , resource_id
+        , vendor_account_name
+        , vendor
+        , overall_amortized_spend
+        , itemized_cost
+        , operations
+        , overall_usage                -- JSON: operation -> usage_quantity
+        , overall_usgae_quantity       -- Sum of usage_quantity
+        , azure_resource_name
+        , azure_resource_group
+        , service_name
+        , usage_families
+        , usgae_types
+        , vendor_account_identifier
+        , region
+        , humana_application_id
+        , Humana_resource_id
+        , updated_date
+        , last_modified_name
+    )
+    SELECT
+          s.[date]                       AS usage_date               -- 1
+        , s.resource_id                  AS resource_id              -- 2
+        , s.vendor_account_name          AS vendor_account_name      -- 3
+        , s.Vendor                       AS vendor                   -- 4
+
+        , SUM(ISNULL(s.amortized_spend, 0.0)) AS overall_amortized_spend    -- 5
+
+        --------------------------------------------------------------------
+        -- 6. JSON: { "operation1": amount1, "operation2": amount2, ... }
+        --------------------------------------------------------------------
+        , CONCAT(
+              '{'
+            , STRING_AGG(
+                  CONCAT(
+                      '"', s.Operation, '":',
+                      COALESCE(CAST(s.amortized_spend AS NVARCHAR(50)), '0')
+                  ),
+                  ','
+              )
+            , '}'
+          ) AS itemized_cost
+
+        --------------------------------------------------------------------
+        -- 7. Array of operations (comma-separated list)
+        --------------------------------------------------------------------
+        , STRING_AGG(s.Operation, ',') AS operations
+
+        --------------------------------------------------------------------
+        -- 8. JSON: { "operation1": usage_qty1, "operation2": usage_qty2, ... }
+        --    Mapped into target column overall_usage
+        --------------------------------------------------------------------
+        , CONCAT(
+              '{'
+            , STRING_AGG(
+                  CONCAT(
+                      '"', s.Operation, '":',
+                      COALESCE(CAST(s.usage_quantity AS NVARCHAR(50)), '0')
+                  ),
+                  ','
+              )
+            , '}'
+          ) AS overall_usage
+
+        --------------------------------------------------------------------
+        -- 9. Sum of usage_quantity
+        --------------------------------------------------------------------
+        , SUM(ISNULL(s.usage_quantity, 0.0)) AS overall_usgae_quantity
+
+        -- 10, 11, 12
+        , s.azure_resource_name         AS azure_resource_name
+        , s.azure_resource_group        AS azure_resource_group
+        , s.service_name                AS service_name
+
+        --------------------------------------------------------------------
+        -- 13. Array of usage_family values (comma-separated)
+        --------------------------------------------------------------------
+        , STRING_AGG(s.usage_family, ',') AS usage_families
+
+        --------------------------------------------------------------------
+        -- 14. Array of usage_type values (comma-separated)
+        --------------------------------------------------------------------
+        , STRING_AGG(s.usage_type, ',')    AS usgae_types
+
+        -- 15, 16, 17, 18
+        , s.vendor_account_identifier   AS vendor_account_identifier
+        , s.Region                      AS region
+        , s.humana_application_id       AS humana_application_id
+        , s.Humana_resource_id          AS Humana_resource_id
+
+        --------------------------------------------------------------------
+        -- updated_date: taking latest timestamp in the group
+        --------------------------------------------------------------------
+        , MAX(s.updated_date)           AS updated_date
+
+        --------------------------------------------------------------------
+        -- 19. last_modified_name = current date
+        --------------------------------------------------------------------
+        , CONVERT(date, GETDATE())      AS last_modified_date
+    FROM
+        [Cloudability].[Daily_Spend] s
+    GROUP BY
+          s.[date]                      -- usage_date
+        , s.resource_id
+        , s.vendor_account_name
+        , s.Vendor
+        , s.azure_resource_name
+        , s.azure_resource_group
+        , s.service_name
+        , s.vendor_account_identifier
+        , s.Region
+        , s.humana_application_id
+        , s.Humana_resource_id;
+END;
+GO
