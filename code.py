@@ -682,3 +682,63 @@ NON-ORPHAN PATH:                     ORPHAN PATH:
            │    End insert_gold_...    │
            └───────────────────────────┘
 
+
+
+
+
+
+
+
+ALTER VIEW [silver].[vw_ActiveResources] AS
+WITH ActiveResources AS
+(
+    SELECT
+        -- 🔹 existing columns
+        [ResourceId],
+
+        -- 🔹 NEW: SubscriptionId parsed from ResourceId
+        SUBSTRING(
+            ResourceId,
+            CHARINDEX('/subscriptions/', ResourceId) + LEN('/subscriptions/'),
+            CHARINDEX('/resourceGroups/', ResourceId)
+              - (CHARINDEX('/subscriptions/', ResourceId) + LEN('/subscriptions/'))
+        ) AS SubscriptionId,
+
+        [ResourceName],
+        [ResourceType],
+        [CloudProvider],
+        [CloudAccountId],
+        [AccountName],
+        [ResourceGroupName],
+        [Region],
+        [Environment],
+        [ResHumanaResourceID],
+        [ResHumanaConsumerID],
+        [RgHumanaResourceID],
+        [RgHumanaConsumerID],
+        [BillingOwnerAppsvcid],
+        [SupportOwnerAppsvcid],
+        [OwnerSource],
+        [IsPlatformManaged],
+        [ManagementModel],
+        [IsOrphaned],
+        [HasConflictingTags],
+        [DependencyTriggeredUpdate],
+        [TagQualityScore],
+        [ResTags],
+        [HashKey],
+        [ChangeCategory],
+        [FirstSeenDate],
+        GETUTCDATE() AS [LastVerifiedDate],
+        [LastModifiedDate],
+        GETUTCDATE() AS [ProcessingDate],
+        [AccountEnv],
+        [CloudVersion],
+        [RgTags],
+        NULL AS [AuditID]
+    FROM [Silver].[AzureResourcesNormalizedStaging]
+    WHERE [IsDeleted] = 0
+)
+SELECT *
+FROM ActiveResources;
+GO
