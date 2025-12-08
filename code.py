@@ -380,3 +380,119 @@ BEGIN
         , s.Humana_resource_id;
 END;
 GO
+
+
+
+
+
+
+
+
+
+
+
+
+START: Start ETL Workflow
+
+    → PROCESS: Load configuration & constants
+        Details: DB connection strings, resource type maps, invalid IDs
+
+    → SUBPROCESS: load_sources() – Load data from SQL sources
+        → DATABASE: Query Lenticular – [silver].[vw_ActiveResources]
+        → DATABASE: Query Lenticular – [Gold].[ITag_Azure_InferredTags]
+        → DATABASE: Query Hybrid ESA – [Silver].[SnowNormalized]
+        → DATA: resources_df, virtual_tags_df, snow_df loaded
+
+    → SUBPROCESS: transform(resources_df, virtual_tags_df, snow_df)
+        → PROCESS: Normalize keys (resource_id_key, appsvc_key, eapm_key)
+
+        → DECISION: IsOrphaned == 1 ?
+
+            → NO (Non-Orphan Path):
+                → PROCESS: Determine primary_appservice 
+                    Details: From BillingOwnerAppsvcId / SupportOwnerAppsvcId
+                → DATABASE: Left Join non-orphan with virtual_tags on resource_id_key
+                → PROCESS: Compute final_app_service_id (primary vs tags)
+                → DATABASE: Left Join non-orphan with SNOW on appsvc_key
+                → PROCESS: Set ownership_path 
+                    Options: non_orphan_appsvc_snow / non_orphan_tags_snow / non_orphan_tags_only
+
+            → YES (Orphan Path):
+                → DATABASE: Left Join orphan resources with virtual_tags
+                → PROCESS: Pick orphan final_app_service_id 
+                    Logic: EAPM → tag app_service_id → fallback patterns
+                → DATABASE: Left Join orphan with SNOW on appsvc_key
+                → PROCESS: Infer ownership_path 
+                    Options: EAPM direct / tag-based / no match
+
+        → PROCESS: Combine orphan and non-orphan results into final_df
+
+        → PROCESS: Derive App Metadata
+            - final_app_id
+            - final_app_name
+            - inferred_app_name
+            - tag-based app patterns
+
+        → PROCESS: Determine Billing + Support Owner
+            - billing_owner_name/email
+            - support_owner_name/email
+            - fallback rules: SNOW → tags → EAPM → Resource metadata
+
+        → PROCESS: Lookup Business Unit & Department
+            From SNOW / EAPM maps
+
+        → PROCESS: Compute platform team name
+            If IsPlatformManaged == TRUE → support_owner_name
+
+        → PROCESS: Compute Ownership Metadata
+            Fields:
+                ownership_determination_method
+                ownership_confidence_score
+                final_orphan flag
+                orphan_reason
+            Logic cases:
+                - Direct EAPMID match (confidence 100)
+                - Virtual Tagging Naming Pattern (40)
+                - Tag app ID (60)
+                - ParentTags (80)
+                - NoTag (0)
+
+        → PROCESS: Compute hash_key
+            SHA256 of core business fields
+
+        → PROCESS: Add timestamps & metadata
+            - mapping_created_date
+            - last_modified_date
+            - is_current = TRUE
+            - audit_id (GUID)
+
+        → PROCESS: Standardize ResourceType
+            Using resource_type_map
+
+        → PROCESS: Rename & select final output columns
+
+    → DECISION: Is gold_df empty or None?
+        → YES → END: Transformation failed – Stop ETL
+        → NO → Continue
+
+    → PROCESS: Prepare load step
+        - Build INSERT SQL
+        - Convert dataframe to row lists
+        - Split into batches (default batch size 1000)
+
+    → SUBPROCESS: insert_gold_parallel(gold_df)
+        → PROCESS: Truncate staging table
+        → PROCESS: Create DB connection factory
+
+        → SUBPROCESS: Parallel Insert (ThreadPoolExecutor)
+            → For each batch:
+                → PROCESS: Open new DB connection
+                → PROCESS: Insert rows into staging table
+            → PROCESS: Wait for all threads to complete
+            → PROCESS: All batches processed successfully
+
+        → PROCESS: Execute stored procedure
+            Name: [Gold].[usp_AzureResourceNormalized]
+            Purpose: Merge staging → Gold final table
+
+END: ETL Workflow Complete (Gold table updated)
