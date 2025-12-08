@@ -496,3 +496,189 @@ START: Start ETL Workflow
             Purpose: Merge staging → Gold final table
 
 END: ETL Workflow Complete (Gold table updated)
+
+
+
+
+
+
+
+
+
+                 ┌───────────────────────────┐
+                 │       START ETL          │
+                 └───────────────────────────┘
+                              │
+                              ▼
+                 ┌───────────────────────────┐
+                 │ Load config & constants   │
+                 │ (DB strings, maps, etc.) │
+                 └───────────────────────────┘
+                              │
+                              ▼
+                 ┌───────────────────────────┐
+                 │       load_sources()      │
+                 └───────────────────────────┘
+                              │
+     ┌────────────────────────┼────────────────────────┐
+     ▼                        ▼                        ▼
+┌───────────────┐      ┌───────────────┐       ┌──────────────────┐
+│ Lenticular    │      │ Lenticular    │       │ Hybrid ESA       │
+│ ActiveResources│      │ InferredTags │       │ SnowNormalized   │
+└───────────────┘      └───────────────┘       └──────────────────┘
+     │                        │                        │
+     └─────────────┬──────────┴───────────┬────────────┘
+                   ▼                      ▼
+           ┌────────────────────────────────────┐
+           │ resources_df, virtual_tags_df,     │
+           │ snow_df are loaded into memory     │
+           └────────────────────────────────────┘
+                              │
+                              ▼
+                 ┌───────────────────────────┐
+                 │   transform(...)          │
+                 │   → build gold_df         │
+                 └───────────────────────────┘
+                              │
+                              ▼
+                 ┌───────────────────────────┐
+                 │  Is gold_df empty/None?   │
+                 └─────────────┬─────────────┘
+                               │
+                  YES          │          NO
+                  ▼            │          ▼
+        ┌────────────────┐     │   ┌─────────────────────────┐
+        │ STOP: error    │     │   │ insert_gold_parallel()  │
+        └────────────────┘     │   └─────────────────────────┘
+                               │              │
+                               │              ▼
+                               │   ┌─────────────────────────┐
+                               │   │ EXEC usp_AzureResource  │
+                               │   │   Normalized (Gold SP)  │
+                               │   └─────────────────────────┘
+                               │              │
+                               │              ▼
+                               │   ┌─────────────────────────┐
+                               └──▶│   END: ETL complete     │
+                                   └─────────────────────────┘
+           ┌───────────────────────────┐
+           │     Start transform()     │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │ Normalize keys            │
+           │ (resource_id_key, etc.)   │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │   IsOrphaned == 1 ?       │
+           └───────────┬───────────────┘
+                       │
+          NON-ORPHAN   │   ORPHAN
+          (0)          │   (1)
+          ▼            │   ▼
+┌────────────────┐     │   ┌─────────────────────────┐
+│ NON-ORPHAN     │     │   │ ORPHAN PATH             │
+│ PATH           │     │   └─────────────────────────┘
+└────────────────┘     │
+                       │
+NON-ORPHAN PATH:                     ORPHAN PATH:
+----------------                     -----------
+1. Pick primary_appservice           1. Join orphan resources
+   (Billing/Support appsvc)             with virtual_tags
+2. Join with virtual_tags            2. Choose app ID
+3. Compute final_app_service_id         (EAPM → tag → fallback)
+4. Join with SNOW on appsvc_key      3. Join with SNOW on appsvc_key
+5. Set ownership_path                4. Set ownership_path
+   (appsvc_snow / tags_snow /           (EAPM direct / tags / none)
+    tags_only)
+
+          ▼                           ▼
+          └─────────┬─────────────────┘
+                    ▼
+         ┌──────────────────────────────┐
+         │   Combine both paths         │
+         │   into final_df              │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │ Derive app_id, app_name      │
+         │ (from SNOW, tags, EAPM)      │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │ Owners, BU, Dept,            │
+         │ platform_team_name           │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │ Ownership scoring            │
+         │ method + confidence +        │
+         │ final_orphan + reason        │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │ hash_key, timestamps,        │
+         │ audit_id, is_current         │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │ Standardize resource type    │
+         │ Select final columns         │
+         └──────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────────────┐
+         │   Return gold_df             │
+         └──────────────────────────────┘
+
+
+
+
+           ┌───────────────────────────┐
+           │  Start insert_gold_...    │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │ Truncate staging table    │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │ Build INSERT SQL          │
+           │ Convert df → row list     │
+           │ Split into batches        │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │  For each batch (thread): │
+           │  - open DB connection     │
+           │  - insert rows            │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │ Wait for all threads      │
+           │ to finish                 │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │ EXEC usp_AzureResource... │
+           │ (merge staging → Gold)    │
+           └───────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────┐
+           │    End insert_gold_...    │
+           └───────────────────────────┘
+
