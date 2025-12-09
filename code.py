@@ -69,3 +69,17 @@ insert_gold_parallel(
     truncate=False,   # don’t truncate each subscription
     post_proc=None    # don’t execute stored proc
 )
+def main():
+    subs = get_subscriptions()
+    print(f"Found {len(subs)} subscriptions: {subs}")
+
+    start_from = "az3-mulesoft-npe"   # the one that failed
+
+    # find its position
+    start_index = subs.index(start_from)
+
+    # process only from this one onwards
+    for account_name in subs[start_index:]:
+        process_subscription(account_name)
+
+main()
