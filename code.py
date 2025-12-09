@@ -63,3 +63,57 @@ def load_sources(account_name: str | None = None):
         """)
 
     return resources_df, virtual_tags_df, snow_df
+
+
+def get_subscriptions() -> list[str]:
+    """
+    Get distinct AccountName values from the active resources view.
+    """
+    sql = """
+        SELECT DISTINCT [AccountName]
+        FROM [silver].[vw_ActiveResources]
+    """
+    with connect(lenticular_server, lenticular_database,
+                 lenticular_username, lenticular_password) as con:
+        df = read_sql_df(con, sql)
+    return df['AccountName'].dropna().tolist()
+
+
+def load_previous_hashes(account_name: str) -> pd.DataFrame:
+    """
+    Get previous HashKey for each ResourceId for this subscription
+    from the normalized table (current snapshot).
+    """
+    sql = """
+        SELECT
+            [ResourceId],
+            [HashKey] AS [HashKey_Gold]
+        FROM [Silver].[AzureResourcesNormalized]
+        WHERE [AccountName] = ?
+          AND [IsCurrent] = 1
+    """
+    with connect(lenticular_server, lenticular_database,
+                 lenticular_username, lenticular_password) as con:
+        return read_sql_df(con, sql, params=[account_name])
+
+
+def filter_changed_resources(resources_df: pd.DataFrame,
+                             prev_hash_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep only rows that are new or whose HashKey changed.
+    """
+    if prev_hash_df.empty:
+        # First run → process everything
+        return resources_df
+
+    merged = resources_df.merge(
+        prev_hash_df[['ResourceId', 'HashKey_Gold']],
+        on='ResourceId',
+        how='left'
+    )
+
+    is_new = merged['HashKey_Gold'].isna()
+    is_changed = merged['HashKey_Gold'].notna() & (merged['HashKey'] != merged['HashKey_Gold'])
+
+    return merged.loc[is_new | is_changed, resources_df.columns]
+
