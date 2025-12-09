@@ -170,3 +170,15 @@ def main():
 main()
 
 
+def read_sql_df(con, sql, params=None):
+    cursor = con.cursor()
+
+    if params:
+        cursor.execute(sql, params)
+    else:
+        cursor.execute(sql)
+
+    rows = cursor.fetchall()
+    columns = [col[0] for col in cursor.description]
+
+    return pd.DataFrame.from_records(rows, columns=columns)
