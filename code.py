@@ -83,3 +83,21 @@ def main():
         process_subscription(account_name)
 
 main()
+
+def main():
+    subs = get_subscriptions()
+    print(f"Found {len(subs)} subscriptions: {subs}")
+
+    start_from = "az3-mulesoft-npe"   # the one that failed
+
+    if start_from in subs:
+        start_index = subs.index(start_from)
+        print(f"Resuming from subscription: {start_from}")
+    else:
+        print(f"{start_from} not found in list. Starting from beginning.")
+        start_index = 0
+
+    for account_name in subs[start_index:]:
+        process_subscription(account_name)
+
+main()
