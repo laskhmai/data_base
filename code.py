@@ -117,3 +117,56 @@ def filter_changed_resources(resources_df: pd.DataFrame,
 
     return merged.loc[is_new | is_changed, resources_df.columns]
 
+
+def process_subscription(account_name: str):
+    print(f"\n=== Processing subscription: {account_name} ===")
+
+    # 1) Load sources for this subscription
+    resources_df, virtual_tags_df, snow_df = load_sources(account_name)
+
+    if resources_df.empty:
+        print("No resources for this subscription. Skipping.")
+        return
+
+    # 2) Load previous hashes for this subscription and filter delta
+    prev_hash_df = load_previous_hashes(account_name)
+    delta_df = filter_changed_resources(resources_df, prev_hash_df)
+
+    if delta_df.empty:
+        print("No new or changed resources (hash unchanged). Skipping transform.")
+        return
+
+    # 3) Transform only the delta
+    print(f"Transforming {len(delta_df)} resources...")
+    gold_df = transform(delta_df, virtual_tags_df, snow_df)
+
+    if gold_df is None or gold_df.empty:
+        print("Transform returned no rows. Skipping insert.")
+        return
+
+    # 4) Load to staging and call stored procedure
+    staging_table_name = "[AZURE].[GoldResourcesNormalizedStagingFinal_1]"
+    store_proc_name    = "[Gold].[usp_AzureResourceNormalized]"
+
+    print(f"Loading {len(gold_df)} rows to staging...")
+    insert_gold_parallel(
+        gold_df,
+        staging_table=staging_table_name,
+        post_proc=store_proc_name,
+        batch_size=1000,
+        max_workers=4,
+    )
+
+
+def main():
+    subs = get_subscriptions()
+    print(f"Found {len(subs)} subscriptions: {subs}")
+
+    for account_name in subs:
+        process_subscription(account_name)
+
+
+# Run the workflow
+main()
+
+
