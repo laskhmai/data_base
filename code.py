@@ -101,3 +101,52 @@ def main():
         process_subscription(account_name)
 
 main()
+
+
+
+def insert_batch(batch, insert_sql, connection_factory):
+    try:
+        with connection_factory(autocommit=False) as con:
+            cur = con.cursor()
+            cur.fast_executemany = True
+            cur.executemany(insert_sql, batch)
+            con.commit()
+        return f"Inserted {len(batch)} rows"
+    except Exception as e:
+        # DO NOT return "Error". Raise so caller can stop.
+        raise RuntimeError(f"Batch insert failed: {e}") from e
+
+
+def insert_gold_parallel(gold_df: pd.DataFrame, staging_table, batch_size=1000, max_workers=4):
+    connection_factory = make_connection_factory(
+        hybridesa1_server, hybridesa1_database, hybridesa1_username, hybridesa1_password, ODBC_DRIVER
+    )
+
+    # (optional) truncate, build insert_sql, rows, batches... same as before
+
+    batches = [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]
+    print(f"Starting parallel insert of {len(rows)} rows in {len(batches)} batches using {max_workers} workers...")
+
+    # ✅ NEW ERROR-AWARE BLOCK
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(insert_batch, batch, insert_sql, connection_factory)
+            for batch in batches
+        ]
+
+        errors = []
+        for future in as_completed(futures):
+            try:
+                msg = future.result()
+                print(msg)
+            except Exception as e:
+                errors.append(e)
+                print("Batch failed:", e)
+
+        if errors:
+            raise RuntimeError(
+                f"One or more batches failed while inserting into {staging_table}"
+            )
+
+    print("All batches processed successfully.")
+    # then your stored proc / next steps
