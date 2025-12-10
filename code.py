@@ -229,3 +229,295 @@ Virtual Tagging table:
 Virtual Tagging gives inferred application details, but SNOW provides
 the authoritative application and ownership info. That’s why we still
 join SNOW to enrich the final record.
+
+
+
+
+FUNCTION transform(resource_df, virtual_tags_df, snow_df):
+
+    ----------------------------------------------------------------
+    STEP 0: Pre-work – build helper sets and normalize keys
+    ----------------------------------------------------------------
+    valid_eapm_ids = unique lower-cased EapmId values from snow_df
+
+    # normalize resource_id for joins
+    resource_df.resource_id_key = lower(str(ResourceId))
+    virtual_tags_df.resource_id_key = lower(str(resource_id))
+
+    ----------------------------------------------------------------
+    STEP 1: Split resources into orphan vs non-orphan
+    ----------------------------------------------------------------
+    # isOrphaned is 1/0, fill NULLs with 0
+    orphan_mask        = (resource_df.isOrphaned filled with 0 == 1)
+    orphaned_res_df    = rows where orphan_mask == TRUE
+    non_orphaned_res_df= rows where orphan_mask == FALSE
+
+    ----------------------------------------------------------------
+    STEP 2: Extract primary AppServiceID from resource table
+    ----------------------------------------------------------------
+    # for non-orphan resources only
+    non_orphaned_res_df.primary_appservice = 
+        apply pick_app_service_id(row):
+            1. get "primary_appservice" column
+            2. normalize string (strip, lower)
+            3. return that value (may be empty)
+
+    ----------------------------------------------------------------
+    STEP 3: Merge inferred tags (virtual tags) onto non-orphan resources
+    ----------------------------------------------------------------
+    non_orphaned_with_tags = LEFT JOIN
+        non_orphaned_res_df
+        WITH virtual_tags_df
+        ON resource_id_key
+        (brings columns: app_service_id, inferred_app_name, scores, res_tags, etc.)
+
+    ----------------------------------------------------------------
+    STEP 4: Determine final AppServiceID and source for non-orphan
+    ----------------------------------------------------------------
+    For each row in non_orphaned_with_tags:
+
+        # helper pick_non_orphaned_appsvc(row):
+        primary_id = normalized primary_appservice
+        tag_id     = normalized app_service_id from tags
+        final_tag  = normalized final_app_service_id (if exists)
+
+        IF primary_id is not empty:
+            return primary_id  # primary wins
+        ELSE IF tag_id not empty:
+            return tag_id      # tag based
+        ELSE IF final_tag not empty:
+            return final_tag
+        ELSE:
+            return NULL
+
+    non_orphaned_with_tags.final_app_service_id =
+        apply pick_non_orphaned_appsvc
+
+    non_orphaned_with_tags.appsvc_source =
+        apply infer_appsvc_source_non_orphan(row):
+            - compare primary vs tag vs final
+            - return "resource table" or "tags_table" or "None"
+
+    ----------------------------------------------------------------
+    STEP 5: Merge SNOW metadata (app owners) using AppServiceID / EAPM
+    ----------------------------------------------------------------
+    # Build small lookup from snow_df
+    snow_appsvc = snow_df[
+        EapmId, AppOwner, AppOwnerEmail, BusinessUnit, Department
+    ]
+    normalize key:
+        snow_appsvc.eapm_key = lower(str(EapmId))
+        drop duplicates on eapm_key
+
+    # Build mapping from eapm_key -> owner info
+    eapm_name_lookup  = dict(eapm_key -> AppOwner)
+    eapm_email_lookup = dict(eapm_key -> AppOwnerEmail)
+    eapm_bu_lookup    = dict(eapm_key -> BusinessUnit)
+    eapm_dept_lookup  = dict(eapm_key -> Department)
+
+    # normalize appsvc ids in final_df for lookup
+    final_df = non_orphaned_with_tags + orphaned_res_df combined
+    final_df.billing_owner_appsvcid  = normalize_str(billing_owner_appsvcid)
+    final_df.support_owner_appsvcid  = normalize_str(support_owner_appsvcid)
+
+    # create eapm_key in final_df (based on final_app_service_id)
+    final_df.eapm_key = normalize_str(final_app_service_id)
+
+    # where we have a valid eapm_key and resource is orphaned:
+    mask_eapm = eapm_key not null AND isOrphaned == 1
+
+    # fill OWNER NAME from EAPM for orphaned rows
+    final_df.billing_owner_name[mask_eapm] =
+        lookup eapm_name_lookup[eapm_key] when present
+    final_df.support_owner_name[mask_eapm] =
+        same logic as billing owner
+
+    # fill OWNER EMAIL from EAPM
+    final_df.billing_owner_email[mask_eapm] =
+        lookup eapm_email_lookup[eapm_key]
+    final_df.support_owner_email[mask_eapm] =
+        lookup eapm_email_lookup[eapm_key]
+
+    # fill BU + Department from EAPM as backup fields
+    final_df.business_unit[mask_eapm] =
+        lookup eapm_bu_lookup[eapm_key] if empty
+    final_df.department[mask_eapm] =
+        lookup eapm_dept_lookup[eapm_key] if empty
+
+    ----------------------------------------------------------------
+    STEP 6: Fix emails and platform team labels
+    ----------------------------------------------------------------
+    # normalize emails with small helper:
+    snow_email_lookup = dict(AppOwnerEmail -> AppOwner normalized)
+
+    For each row:
+        if billing_owner_name looks like an email AND exists in lookup:
+            replace with proper name
+        same for support_owner_name
+
+    # platform team name:
+    final_df.platform_team_name = 
+        IF isPlatformManaged is true THEN support_owner_name ELSE NULL
+
+    ----------------------------------------------------------------
+    STEP 7: Ownership determination + confidence + orphan reason
+    ----------------------------------------------------------------
+    For each row in final_df:
+
+        original_orphan = isOrphaned before ownership logic
+
+        final_id_raw   = final_app_service_id
+        billing_id     = normalized billing_owner_appsvcid
+        support_id     = normalized support_owner_appsvcid
+        final_id_norm  = normalize_str(final_id_raw)
+
+        method        = None
+        confidence    = 0
+        final_orphan  = original_orphan
+        orphan_reason = None
+
+        # CASE 1: Direct EAPMID match in SNOW
+        IF final_id_norm is numeric AND in valid_eapm_ids:
+            method        = "Resource Tags EAPMID"
+            confidence    = 100
+            final_orphan  = 0
+            orphan_reason = None
+
+        # CASE 2: app / bsn tag match
+        ELSE IF billing_id or support_id starts with "app" or "bsn"
+               AND confidence < some threshold:
+            method        = "Virtual Tagging Resource Tag"
+            confidence    = 60
+            final_orphan  = 0
+            orphan_reason = None
+
+        # CASE 3: looks like naming/email pattern but not in SNOW
+        ELSE IF final_id_norm matches app/email pattern:
+            method        = "Virtual Tagging Naming Pattern"
+            confidence    = 40
+            final_orphan  = 2
+            orphan_reason = "invalid_eapm_id"
+
+        # CASE 4: still unmapped
+        ELSE:
+            method        = None
+            confidence    = 0
+            final_orphan  = 2 or 3 (depending)
+            orphan_reason = "NoTag"
+
+        # Non-orphan override logic:
+        IF owner_source == "resourcetags":
+            method     = "ResourceTags"
+            confidence = 100
+            final_orphan = 0
+        ELSE IF owner_source == "inherited":
+            method     = "ParentTags"
+            confidence = 60
+
+        # Save fields into row
+        set:
+            ownership_determination_method = method
+            ownership_confidence_score     = confidence
+            is_orphaned                    = final_orphan
+            orphan_reason                  = orphan_reason
+
+    ----------------------------------------------------------------
+    STEP 8: Compute hash key for change detection
+    ----------------------------------------------------------------
+    For each row in final_df:
+
+        parts = [
+            ResourceId,
+            Region,
+            Environment,
+            ApplicationName,
+            BillingOwnerEmail,
+            BillingOwnerAppsvcid,
+            BillingOwnerName,
+            SupportOwnerEmail,
+            SupportOwnerAppsvcid,
+            SupportOwnerName,
+            BusinessUnit,
+            Department,
+            ownership_determination_method,
+            ownership_confidence_score,
+            orphan_reason,
+            isPlatformManaged,
+            isOrphaned
+        ]  # all as strings, empty when NULL
+
+        hash_key = SHA256(join_with('\n', parts))
+
+        store as column: hash_key
+
+    ----------------------------------------------------------------
+    STEP 9: Add timestamps and standard columns
+    ----------------------------------------------------------------
+    now_utc = current UTC timestamp
+
+    final_df.mapping_created_date = now_utc
+    final_df.is_current           = TRUE
+    final_df.first_seen_date      = FirstSeenDate (filled with now_utc if null)
+    final_df.last_verified_date   = LastVerifiedDate (or now_utc)
+    final_df.last_modified_date   = LastModifiedDate (or now_utc)
+
+    # generate mapping_id and guid for each row
+    final_df.mapping_id = new UUID for each row
+    final_df.guid       = new UUID for each row
+
+    ----------------------------------------------------------------
+    STEP 10: Resource type standardization + rename to Gold schema
+    ----------------------------------------------------------------
+    final_df.resource_type_standardized =
+        apply categorize_resource_type(ResourceType)
+
+    # Rename columns from raw names to Gold names:
+    - "ResourceId"  -> "resource_id"
+    - "ResourceName"-> "resource_name"
+    - "CloudProvider" -> "cloud_provider"
+    - "CloudAccountId"-> "cloud_account_id"
+    - ...
+    - keep all ownership + hash + timestamps
+
+    final_columns = [
+        "resource_id",
+        "resource_name",
+        "resource_type",
+        "resource_type_standardized",
+        "cloud_provider",
+        "cloud_account_id",
+        "account_name",
+        "region",
+        "environment",
+        "billing_owner_appsvcid",
+        "billing_owner_name",
+        "billing_owner_email",
+        "support_owner_appsvcid",
+        "support_owner_name",
+        "support_owner_email",
+        "appsvc_source",
+        "final_app_service_id",
+        "business_unit",
+        "department",
+        "platform_team_name",
+        "management_model",
+        "is_platform_managed",
+        "is_deleted",
+        "is_orphaned",
+        "orphan_reason",
+        "ownership_determination_method",
+        "ownership_confidence_score",
+        "has_conflicting_tags",
+        "dependency_triggered_update",
+        "res_tags",
+        "hash_key",
+        "first_seen_date",
+        "last_verified_date",
+        "last_modified_date",
+        "mapping_created_date",
+        "is_current"
+        ... (any other audit columns you kept)
+    ]
+
+    RETURN final_df[final_columns]
+END FUNCTION
