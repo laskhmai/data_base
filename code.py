@@ -150,3 +150,68 @@ def insert_gold_parallel(gold_df: pd.DataFrame, staging_table, batch_size=1000, 
 
     print("All batches processed successfully.")
     # then your stored proc / next steps
+
+
+
+START
+
+1. Get all subscription names
+   subs = SELECT DISTINCT AccountName FROM Silver.ActiveResources
+
+2. Loop each subscription
+   FOR each subscription in subs:
+
+       PRINT "Processing subscription:", subscription
+
+3. Load Silver resources for this subscription
+       resources = SELECT * 
+                   FROM Silver.ActiveResources
+                   WHERE AccountName = subscription
+
+       IF resources is empty:
+           PRINT "No resources. Skip."
+           CONTINUE
+
+4. Load supporting datasets (full tables)
+       virtual_tags = SELECT * FROM Gold.VirtualTags
+       snow_data    = SELECT * FROM Silver.SNOW_AppData
+
+5. Load previous Gold hashkeys (for same subscription)
+       previous_hash = SELECT ResourceId, HashKey
+                       FROM Gold.GoldResources
+                       WHERE AccountName = subscription
+
+6. Identify NEW or CHANGED rows
+       FOR each row in resources:
+           IF ResourceId NOT in previous_hash → mark as NEW
+           ELSE IF row.HashKey != previous_hash[row.ResourceId] → mark as CHANGED
+           ELSE → mark as UNCHANGED
+
+       delta_rows = NEW + CHANGED rows
+
+       IF delta_rows is empty:
+           PRINT "No change. Skip transformation."
+           CONTINUE
+
+7. Transform delta rows (ownership/orphan logic)
+       FOR each row in delta_rows:
+           IF row.is_orphaned = 0:
+               resolve ownership using SNOW
+           ELSE:
+               IF resource exists in virtual_tags:
+                   resolve using virtual tags
+               ELSE:
+                   mark as orphan (method="Orphan_NoTags")
+
+8. Compute final hashkey + timestamps
+       FOR each row:
+           final_hashkey = SHA256(important fields)
+           last_modified_date = NOW()
+           processing_date = NOW()
+
+9. Insert transformed rows into GOLD staging
+       INSERT delta_rows INTO Gold.GoldResourcesStagingFinal
+
+10. End subscription and continue with next
+
+END
