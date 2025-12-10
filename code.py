@@ -215,3 +215,17 @@ START
 10. End subscription and continue with next
 
 END
+Here are the columns we fetch from SNOW after joining with the
+Virtual Tagging table:
+
+• AppServiceID / AppID
+• AppName
+• EAPMID
+• AppOwnerEmail
+• AppOwnerName
+• BusinessUnit
+• Department
+
+Virtual Tagging gives inferred application details, but SNOW provides
+the authoritative application and ownership info. That’s why we still
+join SNOW to enrich the final record.
