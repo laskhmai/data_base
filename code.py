@@ -1,328 +1,266 @@
-CREATE TABLE [Gold].[AzureGoldResourceNormalized]
+IF OBJECT_ID('Silver.Cloudability_Daily_Resource_Cost_Staging', 'U') IS NULL
+BEGIN
+    CREATE TABLE Silver.Cloudability_Daily_Resource_Cost_Staging
+    (
+        usage_date                 date            NOT NULL,
+        resource_id                nvarchar(500)   NOT NULL,
+        vendor_account_name        nvarchar(250)   NOT NULL,
+        vendor                     nvarchar(250)   NOT NULL,
+
+        overall_amortized_spend    decimal(18,8)   NULL,
+        itemized_cost              nvarchar(4000)  NULL,
+        operations                 nvarchar(4000)  NULL,
+        overall_usage              nvarchar(4000)  NULL,
+        overall_usage_quantity     decimal(18,8)   NULL,
+
+        azure_resource_name        nvarchar(500)   NULL,
+        azure_resource_group       nvarchar(500)   NULL,
+        service_name               nvarchar(500)   NULL,
+        usage_families             nvarchar(2000)  NULL,
+        usage_types                nvarchar(2000)  NULL,
+        vendor_account_identifier  nvarchar(250)   NULL,
+        region                     nvarchar(250)   NULL,
+
+        humana_application_id      nvarchar(250)   NULL,
+        humana_resource_id         nvarchar(250)   NULL,
+
+        updated_date               datetime        NULL,
+        last_modified_date         datetime        NULL
+    );
+
+    -- Helpful for MERGE speed (lightweight)
+    CREATE INDEX IX_Cloudability_Daily_Resource_Cost_Stg_Key
+    ON Silver.Cloudability_Daily_Resource_Cost_Staging (usage_date, vendor_account_name, vendor, resource_id);
+END;
+GO
+
+
+
+
+
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_Cloudability_Daily_Resource_Cost_Report'
+      AND object_id = OBJECT_ID('Silver.Cloudability_Daily_Resource_Cost')
+)
+BEGIN
+    CREATE INDEX IX_Cloudability_Daily_Resource_Cost_Report
+    ON Silver.Cloudability_Daily_Resource_Cost (vendor_account_name, usage_date)
+    INCLUDE (overall_amortized_spend, overall_usage_quantity, azure_resource_name, service_name, region);
+END;
+GO
+
+
+
+
+CREATE OR ALTER PROCEDURE Cloudability.usp_Load_Cloudability_Silver_Staging_Merge
 (
-    resource_id                     NVARCHAR(450)   NULL,
-    resource_name                   NVARCHAR(500)   NULL,
-    resource_type_standardized      NVARCHAR(200)   NULL,
-    cloud_provider                  NVARCHAR(50)    NULL,
-    cloud_account_id                NVARCHAR(200)   NULL,
-    cloud_account_name              NVARCHAR(500)   NULL,
-    region                          NVARCHAR(100)   NULL,
-    environment                     NVARCHAR(50)    NULL,
-
-    billing_owner_appsvcid          NVARCHAR(200)   NULL,
-    support_owner_appsvcid          NVARCHAR(200)   NULL,
-    billing_owner_appid             NVARCHAR(200)   NULL,
-    support_owner_appid             NVARCHAR(200)   NULL,
-
-    application_name                NVARCHAR(500)   NULL,
-
-    billing_owner_email             NVARCHAR(500)   NULL,
-    support_owner_email             NVARCHAR(500)   NULL,
-    billing_owner_name              NVARCHAR(500)   NULL,
-    support_owner_name              NVARCHAR(500)   NULL,
-
-    business_unit                   NVARCHAR(200)   NULL,
-    department                      NVARCHAR(200)   NULL,
-
-    is_platform_managed             BIT             NULL,
-    management_model                NVARCHAR(50)    NULL,
-    platform_team_name              NVARCHAR(200)   NULL,
-
-    ownership_confidence_score      INT             NULL,
-    ownership_determination_method  NVARCHAR(200)   NULL,
-
-    is_orphaned                     TINYINT         NULL,
-    is_deleted                      BIT             NULL,
-    orphan_reason                   NVARCHAR(200)   NULL,
-
-    has_conflicting_tags            BIT             NULL,
-    dependency_triggered_update     BIT             NULL,
-
-    hash_key                        CHAR(64)        NULL,
-    change_category                 NVARCHAR(100)   NULL,
-
-    resource_created_date           DATETIME2(7)    NULL,
-    mapping_created_date            DATETIME2(7)    NULL,
-    last_verified_date              DATETIME2(7)    NULL,
-    last_modified_date              DATETIME2(7)    NULL,
-
-    is_current                      BIT             NULL,
-
-    sourceHashKey                   NVARCHAR(500)   NULL
-);
-
-
-
-✅ Cloudability Cost Normalized Silver – Pseudo Code (Same Style)
-1. Get date range to process
-
-processing_dates = list of dates to load (ex: yesterday or last N days)
-
-2. Loop each date
-
-FOR each usage_date in processing_dates:
-
-PRINT “Processing date: usage_date”
-
-3. Load Cloudability raw rows for that date
-
-raw_rows = SELECT rows from Cloudability_Daily_Spend
-WHERE date = usage_date AND vendor = “Azure”
-
-4. Basic cleanup / standardization
-
-FOR each row in raw_rows:
-
-make sure resource_id is not null
-
-normalize resource_id format (trim, lowercase if required)
-
-standardize operation name (remove extra spaces)
-
-keep needed columns only (resource_id, operation, amortized_spend, tags, metadata)
-
-5. Group to build “1 row per resource per day”
-
-grouped_resources = GROUP raw_rows BY (usage_date, resource_id)
-
-FOR each group (one resource for the day):
-
-total_cost = SUM(amortized_spend for that resource/day)
-
-6. Build cost breakdown for that resource/day
-
-FOR each resource/day group:
-
-cost_breakdown = GROUP rows BY operation
-
-FOR each operation:
-
-operation_cost = SUM(amortized_spend)
-
-add to cost_breakdown list
-
-store cost_breakdown into one column (JSON/text)
-
-Example:
-
-Storage → 3.04
-
-vCore → 5.88
-
-Security → 0.59
-
-7. Build usage summary (optional)
-
-FOR each resource/day group:
-
-usage_breakdown = GROUP rows BY operation
-
-FOR each operation:
-
-operation_usage = SUM(usage_quantity)
-
-add to usage_breakdown list
-
-store usage_breakdown into one column (JSON/text)
-
-8. Capture metadata for the Silver record
-
-FOR each resource/day group:
-
-Pick stable values (usually same in all rows):
-
-vendor_account_name (subscription/billing account)
-
-service_name
-
-region
-
-azure_resource_name
-
-azure_resource_group
-
-humana_application_id (if present)
-
-humana_resource_id (if present)
-
-environment, owner, cost_center (from tags)
-
-9. Detect NEW vs CHANGED Silver records
-
-previous_silver = existing record for (usage_date, resource_id)
-
-IF no previous_silver:
-
-mark as NEW
-ELSE IF total_cost or cost_breakdown or tags changed:
-
-mark as CHANGED
-ELSE:
-
-mark as UNCHANGED
-
-IF UNCHANGED:
-
-skip insert/update
-
-10. Upsert into Silver table
-
-IF NEW:
-
-insert record into Silver_Cost_Normalized
-IF CHANGED:
-
-update existing record in Silver_Cost_Normalized
-
-11. Audit tag changes (separate requirement)
-
-Compare today tags vs last available day tags for same resource:
-
-IF owner/app/cost_center/environment changed:
-
-write a record into Tag_Audit table:
-
-resource_id
-
-tag_name
-
-old_value
-
-new_value
-
-changed_date
-
-
-
-
-CREATE OR ALTER PROCEDURE [Cloudability].[usp_Aggregate_Daily_Spend]
+    @StartDate date,                  -- inclusive
+    @EndDate   date,                  -- exclusive (recommended)
+    @Vendor    nvarchar(50) = 'Azure',
+    @VendorAccountName nvarchar(250) = NULL,  -- optional: one subscription
+    @DoMerge bit = 1                  -- 1 = merge into silver, 0 = only stage + validate
+)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    ----------------------------------------------------------------------------
-    -- OPTIONAL: Clear target table before reload (uncomment if you want this)
-    ----------------------------------------------------------------------------
-    -- TRUNCATE TABLE [Cloudability].[Daily_Spend_Aggregated];
+    -------------------------------------------------------------------------
+    -- 0) Clean staging for this run
+    -------------------------------------------------------------------------
+    TRUNCATE TABLE Silver.Cloudability_Daily_Resource_Cost_Staging;
 
-    ----------------------------------------------------------------------------
-    -- Insert aggregated data
-    ----------------------------------------------------------------------------
-    INSERT INTO [Cloudability].[Daily_Spend_Aggregated]
+    -------------------------------------------------------------------------
+    -- 1) Load aggregated results into STAGING (DECIMAL + JSON-like strings)
+    -------------------------------------------------------------------------
+    INSERT INTO Silver.Cloudability_Daily_Resource_Cost_Staging
     (
-          usage_date
-        , resource_id
-        , vendor_account_name
-        , vendor
-        , overall_amortized_spend
-        , itemized_cost
-        , operations
-        , overall_usage                -- JSON: operation -> usage_quantity
-        , overall_usgae_quantity       -- Sum of usage_quantity
-        , azure_resource_name
-        , azure_resource_group
-        , service_name
-        , usage_families
-        , usgae_types
-        , vendor_account_identifier
-        , region
-        , humana_application_id
-        , Humana_resource_id
-        , updated_date
-        , last_modified_name
+        usage_date,
+        resource_id,
+        vendor_account_name,
+        vendor,
+        overall_amortized_spend,
+        itemized_cost,
+        operations,
+        overall_usage,
+        overall_usage_quantity,
+        azure_resource_name,
+        azure_resource_group,
+        service_name,
+        usage_families,
+        usage_types,
+        vendor_account_identifier,
+        region,
+        humana_application_id,
+        humana_resource_id,
+        updated_date,
+        last_modified_date
     )
     SELECT
-          s.[date]                       AS usage_date               -- 1
-        , s.resource_id                  AS resource_id              -- 2
-        , s.vendor_account_name          AS vendor_account_name      -- 3
-        , s.Vendor                       AS vendor                   -- 4
+        CONVERT(date, s.[date]) AS usage_date,
 
-        , SUM(ISNULL(s.amortized_spend, 0.0)) AS overall_amortized_spend    -- 5
+        -- Normalize resource_id: remove leading slash so key is consistent
+        STUFF(
+            s.resource_id,
+            1,
+            CASE WHEN CHARINDEX('/', s.resource_id) > 0 THEN CHARINDEX('/', s.resource_id) - 1 ELSE 0 END,
+            ''
+        ) AS resource_id,
 
-        --------------------------------------------------------------------
-        -- 6. JSON: { "operation1": amount1, "operation2": amount2, ... }
-        --------------------------------------------------------------------
-        , CONCAT(
-              '{'
-            , STRING_AGG(
-                  CONCAT(
-                      '"', s.Operation, '":',
-                      COALESCE(CAST(s.amortized_spend AS NVARCHAR(50)), '0')
-                  ),
-                  ','
-              )
-            , '}'
-          ) AS itemized_cost
+        s.vendor_account_name,
+        s.vendor,
 
-        --------------------------------------------------------------------
-        -- 7. Array of operations (comma-separated list)
-        --------------------------------------------------------------------
-        , STRING_AGG(s.Operation, ',') AS operations
+        SUM(CAST(ISNULL(s.amortized_spend, 0.0) AS decimal(18,8))) AS overall_amortized_spend,
 
-        --------------------------------------------------------------------
-        -- 8. JSON: { "operation1": usage_qty1, "operation2": usage_qty2, ... }
-        --    Mapped into target column overall_usage
-        --------------------------------------------------------------------
-        , CONCAT(
-              '{'
-            , STRING_AGG(
-                  CONCAT(
-                      '"', s.Operation, '":',
-                      COALESCE(CAST(s.usage_quantity AS NVARCHAR(50)), '0')
-                  ),
-                  ','
-              )
-            , '}'
-          ) AS overall_usage
+        '{' + STRING_AGG(
+                CONCAT(
+                    '"', ISNULL(s.operation,''), '":',
+                    COALESCE(CONVERT(varchar(50), CAST(ISNULL(s.amortized_spend,0.0) AS decimal(18,8))), '0')
+                ),
+            ','
+        ) + '}' AS itemized_cost,
 
-        --------------------------------------------------------------------
-        -- 9. Sum of usage_quantity
-        --------------------------------------------------------------------
-        , SUM(ISNULL(s.usage_quantity, 0.0)) AS overall_usgae_quantity
+        STRING_AGG(ISNULL(s.operation,''), ',') AS operations,
 
-        -- 10, 11, 12
-        , s.azure_resource_name         AS azure_resource_name
-        , s.azure_resource_group        AS azure_resource_group
-        , s.service_name                AS service_name
+        '{' + STRING_AGG(
+                CONCAT(
+                    '"', ISNULL(s.operation,''), '":',
+                    COALESCE(CONVERT(varchar(50), CAST(ISNULL(s.usage_quantity,0.0) AS decimal(18,8))), '0')
+                ),
+            ','
+        ) + '}' AS overall_usage,
 
-        --------------------------------------------------------------------
-        -- 13. Array of usage_family values (comma-separated)
-        --------------------------------------------------------------------
-        , STRING_AGG(s.usage_family, ',') AS usage_families
+        SUM(CAST(ISNULL(s.usage_quantity, 0.0) AS decimal(18,8))) AS overall_usage_quantity,
 
-        --------------------------------------------------------------------
-        -- 14. Array of usage_type values (comma-separated)
-        --------------------------------------------------------------------
-        , STRING_AGG(s.usage_type, ',')    AS usgae_types
+        MAX(s.azure_resource_name) AS azure_resource_name,
+        MAX(s.[Azure_Resource_Group(tag11)]) AS azure_resource_group,
+        MAX(s.service_name) AS service_name,
 
-        -- 15, 16, 17, 18
-        , s.vendor_account_identifier   AS vendor_account_identifier
-        , s.Region                      AS region
-        , s.humana_application_id       AS humana_application_id
-        , s.Humana_resource_id          AS Humana_resource_id
+        STRING_AGG(ISNULL(s.usage_family,''), ',') AS usage_families,
+        STRING_AGG(ISNULL(s.usage_type,''), ',')   AS usage_types,
 
-        --------------------------------------------------------------------
-        -- updated_date: taking latest timestamp in the group
-        --------------------------------------------------------------------
-        , MAX(s.updated_date)           AS updated_date
+        MAX(s.vendor_account_identifier) AS vendor_account_identifier,
+        MAX(s.region) AS region,
 
-        --------------------------------------------------------------------
-        -- 19. last_modified_name = current date
-        --------------------------------------------------------------------
-        , CONVERT(date, GETDATE())      AS last_modified_date
-    FROM
-        [Cloudability].[Daily_Spend] s
+        MAX(s.Humana_Application_ID) AS humana_application_id,
+        MAX(s.[Humana_Resource_ID(tag23)]) AS humana_resource_id,
+
+        MAX(TRY_CONVERT(datetime, s.updated_date)) AS updated_date,
+        GETDATE() AS last_modified_date
+    FROM cloudability.daily_spend s
+    WHERE s.vendor = @Vendor
+      AND CONVERT(date, s.[date]) >= @StartDate
+      AND CONVERT(date, s.[date]) <  @EndDate
+      AND (@VendorAccountName IS NULL OR s.vendor_account_name = @VendorAccountName)
     GROUP BY
-          s.[date]                      -- usage_date
-        , s.resource_id
-        , s.vendor_account_name
-        , s.Vendor
-        , s.azure_resource_name
-        , s.azure_resource_group
-        , s.service_name
-        , s.vendor_account_identifier
-        , s.Region
-        , s.humana_application_id
-        , s.Humana_resource_id;
+        CONVERT(date, s.[date]),
+        STUFF(
+            s.resource_id,
+            1,
+            CASE WHEN CHARINDEX('/', s.resource_id) > 0 THEN CHARINDEX('/', s.resource_id) - 1 ELSE 0 END,
+            ''
+        ),
+        s.vendor_account_name,
+        s.vendor;
+
+    -------------------------------------------------------------------------
+    -- 2) Validation outputs (you can compare with base table totals)
+    -------------------------------------------------------------------------
+    DECLARE @StageRows bigint;
+    DECLARE @StageCost decimal(38,8);
+    DECLARE @StageUsage decimal(38,8);
+
+    SELECT
+        @StageRows = COUNT(*),
+        @StageCost = SUM(overall_amortized_spend),
+        @StageUsage = SUM(overall_usage_quantity)
+    FROM Silver.Cloudability_Daily_Resource_Cost_Staging;
+
+    SELECT
+        @StageRows AS staging_row_count,
+        @StageCost AS staging_total_cost,
+        @StageUsage AS staging_total_usage_quantity;
+
+    -------------------------------------------------------------------------
+    -- 3) Merge into SILVER (Upsert)
+    -------------------------------------------------------------------------
+    IF (@DoMerge = 1)
+    BEGIN
+        BEGIN TRY
+            BEGIN TRAN;
+
+            MERGE Silver.Cloudability_Daily_Resource_Cost WITH (HOLDLOCK) AS tgt
+            USING Silver.Cloudability_Daily_Resource_Cost_Staging AS src
+            ON  tgt.usage_date = src.usage_date
+            AND tgt.vendor_account_name = src.vendor_account_name
+            AND tgt.vendor = src.vendor
+            AND tgt.resource_id = src.resource_id
+
+            WHEN MATCHED THEN
+                UPDATE SET
+                    tgt.overall_amortized_spend   = src.overall_amortized_spend,
+                    tgt.itemized_cost             = src.itemized_cost,
+                    tgt.operations                = src.operations,
+                    tgt.overall_usage             = src.overall_usage,
+                    tgt.overall_usage_quantity    = src.overall_usage_quantity,
+                    tgt.azure_resource_name       = src.azure_resource_name,
+                    tgt.azure_resource_group      = src.azure_resource_group,
+                    tgt.service_name              = src.service_name,
+                    tgt.usage_families            = src.usage_families,
+                    tgt.usage_types               = src.usage_types,
+                    tgt.vendor_account_identifier = src.vendor_account_identifier,
+                    tgt.region                    = src.region,
+                    tgt.humana_application_id     = src.humana_application_id,
+                    tgt.humana_resource_id        = src.humana_resource_id,
+                    tgt.updated_date              = src.updated_date,
+                    tgt.last_modified_date        = src.last_modified_date
+
+            WHEN NOT MATCHED BY TARGET THEN
+                INSERT
+                (
+                    usage_date, resource_id, vendor_account_name, vendor,
+                    overall_amortized_spend, itemized_cost, operations, overall_usage, overall_usage_quantity,
+                    azure_resource_name, azure_resource_group, service_name,
+                    usage_families, usage_types, vendor_account_identifier, region,
+                    humana_application_id, humana_resource_id,
+                    updated_date, last_modified_date
+                )
+                VALUES
+                (
+                    src.usage_date, src.resource_id, src.vendor_account_name, src.vendor,
+                    src.overall_amortized_spend, src.itemized_cost, src.operations, src.overall_usage, src.overall_usage_quantity,
+                    src.azure_resource_name, src.azure_resource_group, src.service_name,
+                    src.usage_families, src.usage_types, src.vendor_account_identifier, src.region,
+                    src.humana_application_id, src.humana_resource_id,
+                    src.updated_date, src.last_modified_date
+                );
+
+            COMMIT TRAN;
+        END TRY
+        BEGIN CATCH
+            IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+            THROW;
+        END CATCH;
+
+        -- Cleanup staging (so next run is clean)
+        TRUNCATE TABLE Silver.Cloudability_Daily_Resource_Cost_Staging;
+    END
 END;
 GO
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
