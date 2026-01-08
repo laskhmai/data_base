@@ -48,3 +48,35 @@ if "final_app_service_id" in orphan_tags.columns:
     print("orphan_tags final_app_service_id sample:", orphan_tags["final_app_service_id"].dropna().astype(str).head(5).tolist())
 if "appservice_key" in snow_df.columns:
     print("snow appservice_key sample:", snow_df["appservice_key"].dropna().astype(str).head(5).tolist())
+
+
+
+
+print("\n=== QUICK CHECK: resources_df columns ===")
+print(list(resources_df.columns))
+
+rid_col = "resource_id" if "resource_id" in resources_df.columns else "ResourceId" if "ResourceId" in resources_df.columns else None
+print("rid_col =", rid_col)
+
+if rid_col:
+    print("\n=== First 5 ResourceIds in resources_df ===")
+    print(resources_df[rid_col].astype(str).head(5).to_list())
+
+    print("\n=== Does DEBUG_RID match any? ===")
+    print(resources_df[rid_col].astype(str).str.strip().str.lower().eq(str(DEBUG_RID).strip().lower()).any())
+
+
+
+print("\n=== BAD ROWS CHECK (appsvcids NULL) ===")
+mask_bad = final_df["billing_owner_appsvcid"].isna() | final_df["support_owner_appsvcid"].isna()
+print("bad rows count:", mask_bad.sum())
+
+cols = [c for c in [
+    "resource_id","ResourceId",
+    "OwnerSource","isOrphaned","original_is_orphaned",
+    "final_app_service_id",
+    "billing_owner_appsvcid","support_owner_appsvcid",
+    "AppID","app_id","application_name"
+] if c in final_df.columns]
+
+print(final_df.loc[mask_bad, cols].head(20).to_string(index=False))
