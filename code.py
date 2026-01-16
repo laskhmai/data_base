@@ -80,3 +80,32 @@ cols = [c for c in [
 ] if c in final_df.columns]
 
 print(final_df.loc[mask_bad, cols].head(20).to_string(index=False))
+
+
+rint("processing")
+
+    responses = [
+        df.set_index(["resource_identifier", "vendor_account_name"])
+        for df in responses
+    ]
+
+    cloudability_df = responses[0]
+
+    for df in responses[1:]:
+        cloudability_df = cloudability_df.join(df, how="left")
+
+    cloudability_df.reset_index(inplace=True)
+    
+    # cloudability_df = reduce(
+    #     lambda df1, df2: pd.merge(
+    #         df1,
+    #         df2,
+    #         how="left",
+    #     ),
+    #     responses,
+    # )
+
+    cloudability_df.drop_duplicates(
+        subset=["resource_identifier", "vendor_account_name"],
+        keep="last",
+        inplace=True,
