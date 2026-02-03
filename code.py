@@ -1,111 +1,119 @@
-# Add ownership columns (DO NOT overwrite existing values)
-final_df["billing_owner_appsvcid"] = (
-    final_df["billing_owner_appsvcid"]
-    .combine_first(final_df["final_app_service_id"])
-)
+CREATE TABLE dbo.Table_Freshness_Config
+(
+    Id            int IDENTITY(1,1) PRIMARY KEY,
+    SchemaName    sysname NOT NULL,
+    TableName     sysname NOT NULL,
+    DateColumn    sysname NOT NULL,
 
-final_df["support_owner_appsvcid"] = (
-    final_df["support_owner_appsvcid"]
-    .combine_first(final_df["final_app_service_id"])
-)
-# ===== OPTION A: Ensure appsvcid columns always exist =====
-for col in ["billing_owner_appsvcid", "support_owner_appsvcid"]:
-    if col not in final_df.columns:
-        final_df[col] = None
-# ✅ Combine both sets (keep ALL columns; do NOT use intersection)
-final_df = pd.concat([non_orphaned_join, orphan_join], ignore_index=True, sort=False)
+    ExpectedTime  time(0) NOT NULL,      -- e.g. '06:00' or '18:00'
+    GraceMinutes  int NOT NULL DEFAULT 60, -- allow delay
+    IsActive      bit NOT NULL DEFAULT 1
+);
+CREATE TABLE dbo.Table_Freshness_Result
+(
+    RunId        uniqueidentifier NOT NULL,
+    CheckedAt    datetime2(0) NOT NULL DEFAULT SYSDATETIME(),
+    SchemaName   sysname NOT NULL,
+    TableName    sysname NOT NULL,
+    DateColumn   sysname NOT NULL,
 
-# ✅ Ensure columns exist (in case one side didn't have them)
-for col in ["billing_owner_appsvcid", "support_owner_appsvcid", "final_app_service_id"]:
-    if col not in final_df.columns:
-        final_df[col] = pd.NA
-def dbg(df, rid, label):
-    x = df[df["resource_id"] == rid].copy() if ("resource_id" in df.columns) else df.iloc[0:0]
-    print(f"\n--- {label} --- rows={len(x)}")
-    if len(x) == 0:
-        return
-    cols = [
-        "resource_id",
-        "OwnerSource",
-        "isOrphaned",
-        "final_app_service_id",
-        "billing_owner_appsvcid",
-        "support_owner_appsvcid",
-        "AppID", "app_id",
-        "AppName", "application_name",
-        "appserviceid_key", "appservice_key"
-    ]
-    cols = [c for c in cols if c in x.columns]
-    print(x[cols].head(10).to_string(index=False))
-DEBUG_RID = "/subscriptions/....."   # paste your one bad resource_id here
-dbg(resources_df, DEBUG_RID, "resources_df (input to transform)")
-dbg(non_orphaned_join, DEBUG_RID, "non_orphaned_join (after snow join)")
-dbg(orphan_tags, DEBUG_RID, "orphan_tags (after pick_orphaned_appsvc)")
-dbg(orphan_join, DEBUG_RID, "orphan_join (after snow join)")
-dbg(final_df, DEBUG_RID, "final_df (after concat)")
-print("\nKey samples:")
-if "final_app_service_id" in orphan_tags.columns:
-    print("orphan_tags final_app_service_id sample:", orphan_tags["final_app_service_id"].dropna().astype(str).head(5).tolist())
-if "appservice_key" in snow_df.columns:
-    print("snow appservice_key sample:", snow_df["appservice_key"].dropna().astype(str).head(5).tolist())
+    ExpectedFrom datetime2(0) NULL,   -- the cutoff time we expect
+    MaxDateValue datetime2(0) NULL,   -- actual max date in table
 
+    Status       varchar(20) NOT NULL, -- SUCCESS / NOT_RUN / NO_DATA / ERROR
+    Details      varchar(500) NULL
+);
+CREATE OR ALTER PROCEDURE dbo.usp_Check_Table_Freshness
+AS
+BEGIN
+    SET NOCOUNT ON;
 
+    DECLARE @RunId uniqueidentifier = NEWID();
+    DECLARE @Now datetime2(0) = SYSDATETIME();
+    DECLARE @Today date = CAST(@Now AS date);
 
+    DECLARE
+        @Schema sysname,
+        @Table  sysname,
+        @Col    sysname,
+        @ExpectedTime time(0),
+        @Grace int,
+        @sql nvarchar(max);
 
-print("\n=== QUICK CHECK: resources_df columns ===")
-print(list(resources_df.columns))
+    DECLARE cur CURSOR FAST_FORWARD FOR
+    SELECT SchemaName, TableName, DateColumn, ExpectedTime, GraceMinutes
+    FROM dbo.Table_Freshness_Config
+    WHERE IsActive = 1;
 
-rid_col = "resource_id" if "resource_id" in resources_df.columns else "ResourceId" if "ResourceId" in resources_df.columns else None
-print("rid_col =", rid_col)
+    OPEN cur;
+    FETCH NEXT FROM cur INTO @Schema, @Table, @Col, @ExpectedTime, @Grace;
 
-if rid_col:
-    print("\n=== First 5 ResourceIds in resources_df ===")
-    print(resources_df[rid_col].astype(str).head(5).to_list())
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        BEGIN TRY
+            -- Build expected cutoff datetime:
+            -- If current time is before today's expected time => compare against yesterday expected time
+            DECLARE @ExpectedToday datetime2(0) =
+                CAST(@Today AS datetime2(0)) + CAST(@ExpectedTime AS datetime2(0));
 
-    print("\n=== Does DEBUG_RID match any? ===")
-    print(resources_df[rid_col].astype(str).str.strip().str.lower().eq(str(DEBUG_RID).strip().lower()).any())
+            DECLARE @ExpectedFrom datetime2(0) =
+                CASE WHEN @Now < @ExpectedToday
+                     THEN DATEADD(DAY, -1, @ExpectedToday)
+                     ELSE @ExpectedToday
+                END;
 
+            -- Apply grace (allow late run)
+            SET @ExpectedFrom = DATEADD(MINUTE, -@Grace, @ExpectedFrom);
 
+            -- Dynamic SQL to get MAX(dateColumn)
+            SET @sql = N'
+                DECLARE @maxdt datetime2(0);
 
-print("\n=== BAD ROWS CHECK (appsvcids NULL) ===")
-mask_bad = final_df["billing_owner_appsvcid"].isna() | final_df["support_owner_appsvcid"].isna()
-print("bad rows count:", mask_bad.sum())
+                SELECT @maxdt = MAX(TRY_CONVERT(datetime2(0), ' + QUOTENAME(@Col) + N'))
+                FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Table) + N';
 
-cols = [c for c in [
-    "resource_id","ResourceId",
-    "OwnerSource","isOrphaned","original_is_orphaned",
-    "final_app_service_id",
-    "billing_owner_appsvcid","support_owner_appsvcid",
-    "AppID","app_id","application_name"
-] if c in final_df.columns]
+                INSERT INTO dbo.Table_Freshness_Result
+                (RunId, SchemaName, TableName, DateColumn, ExpectedFrom, MaxDateValue, Status, Details)
+                VALUES
+                (
+                    @RunId, @SchemaName, @TableName, @DateColumn, @ExpectedFrom, @maxdt,
+                    CASE
+                        WHEN @maxdt IS NULL THEN ''NO_DATA''
+                        WHEN @maxdt >= @ExpectedFrom THEN ''SUCCESS''
+                        ELSE ''NOT_RUN''
+                    END,
+                    CASE
+                        WHEN @maxdt IS NULL THEN ''No rows / date null''
+                        WHEN @maxdt >= @ExpectedFrom THEN ''OK''
+                        ELSE CONCAT(''LastUpdate='', CONVERT(varchar(19), @maxdt, 120))
+                    END
+                );';
 
-print(final_df.loc[mask_bad, cols].head(20).to_string(index=False))
+            EXEC sp_executesql
+                @sql,
+                N'@RunId uniqueidentifier, @SchemaName sysname, @TableName sysname, @DateColumn sysname, @ExpectedFrom datetime2(0)',
+                @RunId=@RunId, @SchemaName=@Schema, @TableName=@Table, @DateColumn=@Col, @ExpectedFrom=@ExpectedFrom;
 
+        END TRY
+        BEGIN CATCH
+            INSERT INTO dbo.Table_Freshness_Result
+            (RunId, SchemaName, TableName, DateColumn, ExpectedFrom, MaxDateValue, Status, Details)
+            VALUES
+            (@RunId, @Schema, @Table, @Col, NULL, NULL, 'ERROR', LEFT(ERROR_MESSAGE(), 500));
+        END CATCH;
 
-rint("processing")
+        FETCH NEXT FROM cur INTO @Schema, @Table, @Col, @ExpectedTime, @Grace;
+    END
 
-    responses = [
-        df.set_index(["resource_identifier", "vendor_account_name"])
-        for df in responses
-    ]
+    CLOSE cur;
+    DEALLOCATE cur;
 
-    cloudability_df = responses[0]
-
-    for df in responses[1:]:
-        cloudability_df = cloudability_df.join(df, how="left")
-
-    cloudability_df.reset_index(inplace=True)
-    
-    # cloudability_df = reduce(
-    #     lambda df1, df2: pd.merge(
-    #         df1,
-    #         df2,
-    #         how="left",
-    #     ),
-    #     responses,
-    # )
-
-    cloudability_df.drop_duplicates(
-        subset=["resource_identifier", "vendor_account_name"],
-        keep="last",
-        inplace=True,
+    -- Show summary for this run
+    SELECT *
+    FROM dbo.Table_Freshness_Result
+    WHERE RunId = @RunId
+    ORDER BY
+        CASE Status WHEN 'ERROR' THEN 1 WHEN 'NOT_RUN' THEN 2 WHEN 'NO_DATA' THEN 3 ELSE 4 END,
+        SchemaName, TableName;
+END
+GO
