@@ -111,3 +111,16 @@ BEGIN
     ORDER BY CheckedAt DESC, Status, SchemaName, TableName;
 END;
 GO
+INSERT INTO dbo.Daily_RunTables
+(
+    SchemaName,
+    TableName,
+    DateColumn,
+    ExpectedTime,
+    GraceMinutes
+)
+VALUES
+('Cloudability','Properties','UpdatedDate','06:00',60),
+('Cloudability','Daily_Spend','updated_date','18:00',90),
+('Cloudability','Tags','updated_date','16:00',60),
+('Cloudability','Categories','updated_date','15:30',60);
