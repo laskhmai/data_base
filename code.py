@@ -1,25 +1,8 @@
-SELECT
-    ResourceId,
-    CASE 
-        WHEN ResTags LIKE '%parking%' THEN 'ResTags'
-        WHEN RgTags LIKE '%parking%' THEN 'RgTags'
-        WHEN Properties LIKE '%parking%' THEN 'Properties'
-        ELSE 'Not Found'
-    END AS ParkingFoundIn,
-    ResTags,
-    RgTags,
-    Properties
-FROM silver.AzureResourcesNormalized
-WHERE
-    ResTags LIKE '%parking%'
- OR RgTags LIKE '%parking%'
- OR Properties LIKE '%parking%';
+In the current module, Terraform is not creating or managing subnets directly.
+However, the storage account network rules and private endpoints explicitly reference a defined list of subnet IDs.
 
+If a subnet is created manually via the Azure Portal and its subnet ID is not included in the Terraform configuration (for example in usr-custom-vnet-subnet-ids), Terraform will not delete the subnet itself.
 
+However, during terraform apply, it will remove that subnet from the storage account network rules if it is not defined in code.
 
-SELECT
-    ResourceId,
-    JSON_VALUE(ResTags, '$.parking') AS ParkingValue,
-    ResTags
-FROM silver.AzureResourcesNormalized
-WHERE JSON_VALUE(ResTags, '$.parking') IS NOT NULL;
+To retain access, the subnet ID must be added to the Terraform configuration.
