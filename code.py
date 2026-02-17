@@ -1,32 +1,13 @@
-✅ Where the mistake happened
+Hi Nate,
+Just to give context on the changes —
 
-You have two separate workflows (QA workflow + UAT workflow), but inside each workflow the matrix is still:
-branch: [QA, UAT]
+Satish made updates to the Redis Terraform configuration and also modified the GitHub workflows related to QA/UAT execution.
 
-So:
+Specifically:
+• Workflow changes were made to how QA and UAT environments are triggered (matrix/branch configuration was adjusted).
+• There were changes around backend/workspace configuration and how workspace.tf gets created during runtime.
+• Branch structure was also adjusted (feature → dev → main flow changed slightly).
 
-The QA workflow is running for QA and also for UAT
+After these updates, we are seeing inconsistent behavior between DEV vs QA/UAT pipelines. DEV worked correctly, but QA/UAT are either showing “No changes” or behaving unexpectedly.
 
-The UAT workflow is running for QA and also for UAT
-
-That creates confusion and often leads to:
-
-running the wrong environment with the wrong TF_WORKSPACE_NAME
-
-“No changes” because it’s pointing to the wrong workspace/state
-
-deployments not matching what you expect
-
-That’s exactly what Charles was pointing out: each workflow should target only its own env.
-
-✅ What it should be
-
-Option A (recommended): Keep 2 workflows
-
-QA workflow → branch: [QA]
-
-UAT workflow → branch: [UAT]
-
-Option B: Keep 1 workflow
-
-Single workflow → branch: [DEV, QA, UAT, PREPROD] and handle all in one file
+Can you help review whether the workflow/workspace mapping changes could be causing this?
