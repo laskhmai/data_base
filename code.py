@@ -1,13 +1,30 @@
 Hi Nate,
-Just to give context on the changes —
 
-Satish made updates to the Redis Terraform configuration and also modified the GitHub workflows related to QA/UAT execution.
+Just to explain everything from the beginning so it’s clear:
 
-Specifically:
-• Workflow changes were made to how QA and UAT environments are triggered (matrix/branch configuration was adjusted).
-• There were changes around backend/workspace configuration and how workspace.tf gets created during runtime.
-• Branch structure was also adjusted (feature → dev → main flow changed slightly).
+We started with the Redis changes in a feature branch (feature/phmddsme-redis-main).
 
-After these updates, we are seeing inconsistent behavior between DEV vs QA/UAT pipelines. DEV worked correctly, but QA/UAT are either showing “No changes” or behaving unexpectedly.
+A PR was opened to merge into main.
 
-Can you help review whether the workflow/workspace mapping changes could be causing this?
+The QA and UAT Terraform plan workflows were triggered from that PR.
+
+Initially, both QA and UAT workflows had:
+
+branch: [QA, UAT]
+
+so both environments were running from the same matrix configuration.
+
+We suspected that might be causing workspace confusion, so the workflows were separated so QA and UAT run independently.
+
+After separating them, the pipelines still show:
+“No changes. Your infrastructure matches the configuration.”
+
+DEV previously worked correctly.
+
+At this point, QA and UAT are running, but Terraform is not detecting any changes even though Redis changes were added.
+
+Could you help review whether:
+
+The workspace mapping per environment is correct, or
+
+The workflows are referencing the correct Terraform Cloud workspaces/state?
