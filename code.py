@@ -1,30 +1,22 @@
-Hi Nate,
+Hi,
 
-Just to explain everything from the beginning so it’s clear:
+Here’s what happened with the storage account.
 
-We started with the Redis changes in a feature branch (feature/phmddsme-redis-main).
+The DEV pipeline ran correctly with environment = DEV.
+But in storage.tf the condition is written like this:
 
-A PR was opened to merge into main.
+contains(["npe","dev","qa"], var.env) ? local.qa.storage : local.prd.storage
 
-The QA and UAT Terraform plan workflows were triggered from that PR.
+Because dev is included in that list, Terraform is routing DEV to the QA storage configuration.
 
-Initially, both QA and UAT workflows had:
+So when the plan ran in DEV:
 
-branch: [QA, UAT]
+It picked QA storage config
 
-so both environments were running from the same matrix configuration.
+The existing DEV storage didn’t match QA config
 
-We suspected that might be causing workspace confusion, so the workflows were separated so QA and UAT run independently.
+Terraform marked it as “must be replaced”
 
-After separating them, the pipelines still show:
-“No changes. Your infrastructure matches the configuration.”
+That’s why it planned destroy/recreate
 
-DEV previously worked correctly.
-
-At this point, QA and UAT are running, but Terraform is not detecting any changes even though Redis changes were added.
-
-Could you help review whether:
-
-The workspace mapping per environment is correct, or
-
-The workflows are referencing the correct Terraform Cloud workspaces/state?
+Terraform didn’t randomly delete anything — it followed the condition in the code.
