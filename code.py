@@ -1,7 +1,9 @@
-Hi Govindaraj,
+Currently the slot resource does not manage app_settings. So Terraform will not update FUNCTIONS_WORKER_RUNTIME for the slot.
 
-I checked the module code for functionapp9.
+To update it properly, we would need to modify the module and add app_settings to the azurerm_windows_function_app_slot resource. That would be the correct long-term fix.
 
-The app_settings are defined only for the primary function app. The deployment slot resource does not currently include or manage app_settings.
+Alternatively, it can be updated manually in Azure portal as a temporary solution.
 
-That is why the primary app shows dotnet-isolated, while the slot still has the previous value.
+For Question 2:
+
+If FUNCTIONS_WORKER_RUNTIME is deleted manually from the slot in Azure portal, it will not affect Terraform state, since the slot app settings are not currently managed by Terraform.
