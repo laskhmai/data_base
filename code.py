@@ -1,39 +1,7 @@
-variable "usr-dynatrace-ssl-mode" {
-  type = string
+Hi Juzer, good morning. Since our Terraform structure expects both NPE and PROD components to follow the same template, we can keep the existing logic and handle this in `locals`. If the storage account is required only in NPE, we can define it under `local.npe.storage` and keep the PROD section empty, like:
+
+prd = {
+storage = {}
 }
 
-variable "team-spn-client-id" {
-  type = string
-}
-
-variable "team-spn-client-secret" {
-  type = string
-}
-
-variable "usr-dynatrace-networkzone-centralus" {
-  type = string
-}
-
-variable "usr-jfrog-svc-acc-token" {
-  type = string
-}
-
-variable "usr-Humana-Enterprise-Root-CA-thumb" {
-  type = string
-}
-
-variable "usr-dynatrace-networkzone-eastus2" {
-  type = string
-}
-
-variable "usr-dynatrace-tenantid" {
-  type = string
-}
-
-variable "usr-dynatrace-server-url" {
-  type = string
-}
-
-variable "usr-dynatrace-token" {
-  type = string
-}
+This way, when the NPE workflow runs it will create the storage account, and when the PROD workflow runs no resource will be created.
