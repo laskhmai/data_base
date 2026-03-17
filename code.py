@@ -1,7 +1,9 @@
-Hi Sonu, thanks for checking with **13.0.18**.
+Hi Nate,
 
-Yes, the earlier issue was due to **module 13.0.11 using the old `log` block**, which is not compatible with the AzureRM **v4 provider** used in the pipeline. In **13.0.18 this was updated to `enabled_log`, so the plan runs successfully now.**
+I’m supporting a ticket where we hit an error with the Diagnostic Settings module. The pipeline is using AzureRM provider v4, and module version 13.0.11 was using the older `log` block, which caused the error. Sonu tested with version 13.0.18 and the plan now runs successfully.
 
-I noticed the plan is showing **2 resources to add** (`vnet-integration` and `linux-webapp-private-endpoint`). Since we didn’t add new code on our side, it’s likely Terraform is detecting them due to **module version/state differences** after switching to 13.0.18.
+However, the plan shows **2 resources to add**:
+• `azurerm_resource_group_template_deployment.vnet-integration`
+• `azurerm_private_endpoint.linux-webapp-private-endpoint`
 
-Before applying, it would be good to verify whether those resources already exist in Azure or if they are missing from the Terraform state, just to avoid creating duplicates.
+Before applying, I wanted to check — if these resources already exist in the environment, should we **import them into Terraform state** instead of creating them again? Please let me know the best approach here.
