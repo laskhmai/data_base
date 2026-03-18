@@ -1,1 +1,17 @@
-Can you please confirm the change was done in the correct variable group for this pipeline environment? If the pipeline is using a different env variable group, Terraform may still be picking the old value, which is why the plan is not detecting the change.
+Steps
+
+Go to Pipelines → your pipeline
+
+Click Edit
+
+Open Variables
+
+Find system.debug
+
+Change value from false → true
+
+Save
+
+Run the pipeline again
+
+After running again, the Replace tokens in **/*.tf **/*.tfvars step will show detailed logs.
