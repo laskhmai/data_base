@@ -1,17 +1,17 @@
-Steps
+Hi Tracy,
 
-Go to Pipelines → your pipeline
+Just wanted to share a quick update on this.
 
-Click Edit
+Initially, we updated the module version and the pipeline ran successfully. After that, we introduced the scaling change (capacity 1 → 2), but Terraform is not detecting any changes — it still shows “No changes”.
 
-Open Variables
+I verified the setup end-to-end:
 
-Find system.debug
+* Pipeline variables are updated correctly
+* Token replacement step is working
+* All `.tf` files are present and the working directory is correct
 
-Change value from false → true
+Since it was still not clear, I reached out to Nate. Based on his suggestions, we enabled detailed logging and validated the working directory and files as well. Everything looks correct, but even after that, the plan is still not detecting the change.
 
-Save
+At this point, we’re unable to identify why the updated value is not being picked up by Terraform.
 
-Run the pipeline again
-
-After running again, the Replace tokens in **/*.tf **/*.tfvars step will show detailed logs.
+Could you please suggest what we should try next or if there’s anything else we should validate?
