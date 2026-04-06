@@ -1,4 +1,3 @@
-# Function to connect to the database
 def connect_to_db():
     try:
         logger.info("Attempting to connect to the database...")
@@ -143,7 +142,7 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
     headers = {
         "Accept": "application/vnd.atlas.2025-03-12+json",
     }
-    auth = requests.auth.HTTPDigestAuth(
+    auth = HTTPDigestAuth(
         auth_entry["public_key"],
         auth_entry["private_key"],
     )
@@ -180,7 +179,48 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
         return []
 
 
-def call_api(auth_entries):
+def write_processes_to_db(cursor, processes):
+    """
+    Inserts a list of process records into [AtlasMongoDB].[Processor].
+    ClusterKey is set to NULL as it is not returned by the processes API.
+    """
+    if not processes:
+        return
+
+    query = """
+        INSERT INTO [AtlasMongoDB].[Processor] (
+            OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
+            SourceId, ProcessType, Links,
+            SourceCreatedDate, SourceUpdatedDate,
+            AuditUtc, AuditUser, IsDeleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    audit_utc = datetime.now(timezone.utc)
+
+    rows = [
+        (
+            p["OrgKey"],
+            p["ProjectKey"],
+            None,                                          # ClusterKey
+            p.get("hostname"),                             # Name
+            p.get("replicaSetName"),                       # ReplicaSetName
+            p.get("id"),                                   # SourceId
+            p.get("typeName"),                             # ProcessType
+            json.dumps(p.get("links")) if p.get("links") is not None else None,  # Links
+            p.get("created"),                              # SourceCreatedDate
+            p.get("lastPing"),                             # SourceUpdatedDate
+            audit_utc,                                     # AuditUtc
+            "mongodb_processor",                           # AuditUser
+            0,                                             # IsDeleted
+        )
+        for p in processes
+    ]
+
+    cursor.executemany(query, rows)
+    logger.info(f"{len(rows)} process record(s) inserted into [AtlasMongoDB].[Processor].")
+
+
     """
     Example API invocation using authorization headers
     """
@@ -267,7 +307,7 @@ def main():
                     org["OrgKey"], project["ProjectKey"]
                 )
                 print(f"  Processes fetched: {len(processes)}")
-                # TODO: store `processes` list into DB (sssm)
+                write_processes_to_db(cursor, processes)
 
     except pyodbc.Error as e:
         print(f"ERROR reading table data -> {e}")
