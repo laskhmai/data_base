@@ -1,3 +1,6 @@
+VERIFY_SSL = False
+
+# Function to connect to the database
 def connect_to_db():
     try:
         logger.info("Attempting to connect to the database...")
@@ -45,6 +48,19 @@ def read_org_table(cursor):
         org_data = dict(zip(columns, row))
         org_list.append(org_data)
     return org_list
+
+def read_cluster_map(cursor):
+    """
+    Reads [AtlasMongoDB].[Clusters] and returns a dict mapping
+    ProjectKey -> ClusterKey for use as a foreign key in Processor.
+    """
+    query = """
+        SELECT [ProjectKey], [ClusterKey]
+        FROM [AtlasMongoDB].[Clusters]
+        WHERE IsDeleted = 0;
+    """
+    cursor.execute(query)
+    return {row[0]: row[1] for row in cursor.fetchall()}
 
 def read_project_table(cursor, orgId):
     """
@@ -160,7 +176,7 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
     )
 
     try:
-        response = requests.get(url, headers=headers, auth=auth, timeout=10)
+        response = requests.get(url, headers=headers, auth=auth, timeout=10, verify=VERIFY_SSL)
         response.raise_for_status()
         data = response.json()
 
@@ -179,10 +195,10 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
         return []
 
 
-def write_processes_to_db(cursor, processes):
+def write_processes_to_db(cursor, processes, cluster_map):
     """
     Inserts a list of process records into [AtlasMongoDB].[Processor].
-    ClusterKey is set to NULL as it is not returned by the processes API.
+    ClusterKey is resolved from cluster_map using ProjectKey.
     """
     if not processes:
         return
@@ -202,7 +218,7 @@ def write_processes_to_db(cursor, processes):
         (
             p["OrgKey"],
             p["ProjectKey"],
-            None,                                          # ClusterKey
+            cluster_map.get(p["ProjectKey"]),              # ClusterKey
             p.get("hostname"),                             # Name
             p.get("replicaSetName"),                       # ReplicaSetName
             p.get("id"),                                   # SourceId
@@ -211,7 +227,7 @@ def write_processes_to_db(cursor, processes):
             p.get("created"),                              # SourceCreatedDate
             p.get("lastPing"),                             # SourceUpdatedDate
             audit_utc,                                     # AuditUtc
-            "mongodb_processor",                           # AuditUser
+            "Lenticular",                                  # AuditUser
             0,                                             # IsDeleted
         )
         for p in processes
@@ -220,31 +236,6 @@ def write_processes_to_db(cursor, processes):
     cursor.executemany(query, rows)
     logger.info(f"{len(rows)} process record(s) inserted into [AtlasMongoDB].[Processor].")
 
-
-    """
-    Example API invocation using authorization headers
-    """
-
-    API_URL = "https://api.example.com/data"
-
-    for entry in auth_entries:
-        headers = {
-            "X-ORG": entry["org"],
-            "X-PUBLIC-KEY": entry["public_key"],
-            "X-PRIVATE-KEY": entry["private_key"],
-            "Content-Type": "application/json",
-        }
-
-        try:
-            response = requests.get(API_URL, headers=headers, timeout=10)
-            print(
-                f"Org={entry['org']} | Status={response.status_code}"
-            )
-
-        except requests.RequestException as e:
-            print(
-                f"API call failed for Org={entry['org']} : {e}"
-            )
 
 def main():
     """
@@ -271,6 +262,9 @@ def main():
     try:
         organizations = read_org_table(cursor)
 
+        cluster_map = read_cluster_map(cursor)
+        logger.info(f"Cluster map loaded: {len(cluster_map)} entries")
+
         print("\nOrganizations Loaded Successfully:\n")
 
         for org in organizations:
@@ -285,7 +279,7 @@ def main():
             print(f"Audit_UTC   : {org['Audit_UTC']}")
             print("-" * 50)
 
-            auth_entry = auth_lookup.get(org["OrgId"])
+            auth_entry = auth_lookup.get(org["Name"])
 
             if not auth_entry:
                 logger.warning(
@@ -307,7 +301,8 @@ def main():
                     org["OrgKey"], project["ProjectKey"]
                 )
                 print(f"  Processes fetched: {len(processes)}")
-                write_processes_to_db(cursor, processes)
+                write_processes_to_db(cursor, processes, cluster_map)
+                cursor.connection.commit()
 
     except pyodbc.Error as e:
         print(f"ERROR reading table data -> {e}")
