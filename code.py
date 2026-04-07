@@ -173,6 +173,7 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
         "shardName",
         "typeName",
         "userAlias",
+        "Version",
     )
 
     try:
@@ -197,23 +198,23 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
 
 def write_processes_to_db(cursor, processes, cluster_map):
     """
-    Inserts a list of process records into [AtlasMongoDB].[Processor].
+    Inserts a list of process records into [AtlasMongoDB].[Process].
     ClusterKey is resolved from cluster_map using ProjectKey.
     """
     if not processes:
         return
 
     query = """
-        INSERT INTO [AtlasMongoDB].[Processor] (
+        INSERT INTO [AtlasMongoDB].[Process] (
             OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
-            SourceId, ProcessType, Links,
-            SourceCreatedDate, SourceUpdatedDate,
+            ProcessId, ProcessType, Links,userAlias,Version
+            ProcessCreatedDate, ProcessUpdatedDate,VerifiedUtc,
             AuditUtc, AuditUser, IsDeleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?)
     """
 
     audit_utc = datetime.now(timezone.utc)
-
+    verified_utc=datetime.now(timezone.utc)
     rows = [
         (
             p["OrgKey"],
@@ -224,6 +225,8 @@ def write_processes_to_db(cursor, processes, cluster_map):
             p.get("id"),                                   # SourceId
             p.get("typeName"),                             # ProcessType
             json.dumps(p.get("links")) if p.get("links") is not None else None,  # Links
+            p.get("userAlias"),
+            p.get("version"),
             p.get("created"),                              # SourceCreatedDate
             p.get("lastPing"),                             # SourceUpdatedDate
             audit_utc,                                     # AuditUtc
@@ -234,7 +237,7 @@ def write_processes_to_db(cursor, processes, cluster_map):
     ]
 
     cursor.executemany(query, rows)
-    logger.info(f"{len(rows)} process record(s) inserted into [AtlasMongoDB].[Processor].")
+    logger.info(f"{len(rows)} process record(s) inserted into [AtlasMongoDB].[Process].")
 
 
 def main():
