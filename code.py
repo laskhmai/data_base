@@ -1,4 +1,4 @@
-VERIFY_SSL = False
+ERIFY_SSL = False
 
 # Function to connect to the database
 def connect_to_db():
@@ -198,23 +198,55 @@ def get_project_processes(project_id, auth_entry, org_key, project_key):
 
 def write_processes_to_db(cursor, processes, cluster_map):
     """
-    Inserts a list of process records into [AtlasMongoDB].[Process].
+    Upserts process records into [AtlasMongoDB].[Process] using MERGE.
+    Unique key: (ProcessId, ProjectKey).
+    - Inserts the record if it does not exist.
+    - Updates mutable fields if it already exists (ProcessCreatedDate is preserved).
     ClusterKey is resolved from cluster_map using ProjectKey.
     """
     if not processes:
         return
 
-    query = """
-        INSERT INTO [AtlasMongoDB].[Process] (
-            OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
-            ProcessId, ProcessType, Links,userAlias,Version
-            ProcessCreatedDate, ProcessUpdatedDate,VerifiedUtc,
-            AuditUtc, AuditUser, IsDeleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?)
+    merge_query = """
+        MERGE [AtlasMongoDB].[Process] AS target
+        USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
+            AS source (OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
+                       ProcessId, ProcessType, Links, UserAlias, Version,
+                       ProcessCreatedDate, ProcessUpdatedDate, VerifiedUtc,
+                       AuditUtc, AuditUser, IsDeleted)
+        ON target.ProcessId = source.ProcessId
+           AND target.ProjectKey = source.ProjectKey
+        WHEN MATCHED THEN
+            UPDATE SET
+                OrgKey             = source.OrgKey,
+                ClusterKey         = source.ClusterKey,
+                Name               = source.Name,
+                ReplicaSetName     = source.ReplicaSetName,
+                ProcessType        = source.ProcessType,
+                Links              = source.Links,
+                UserAlias          = source.UserAlias,
+                Version            = source.Version,
+                ProcessUpdatedDate = source.ProcessUpdatedDate,
+                VerifiedUtc        = source.VerifiedUtc,
+                AuditUtc           = source.AuditUtc,
+                AuditUser          = source.AuditUser,
+                IsDeleted          = source.IsDeleted
+        WHEN NOT MATCHED THEN
+            INSERT (OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
+                    ProcessId, ProcessType, Links, UserAlias, Version,
+                    ProcessCreatedDate, ProcessUpdatedDate, VerifiedUtc,
+                    AuditUtc, AuditUser, IsDeleted)
+            VALUES (source.OrgKey, source.ProjectKey, source.ClusterKey,
+                    source.Name, source.ReplicaSetName, source.ProcessId,
+                    source.ProcessType, source.Links, source.UserAlias,
+                    source.Version, source.ProcessCreatedDate,
+                    source.ProcessUpdatedDate, source.VerifiedUtc,
+                    source.AuditUtc, source.AuditUser, source.IsDeleted);
     """
 
     audit_utc = datetime.now(timezone.utc)
-    verified_utc=datetime.now(timezone.utc)
+    verified_utc = datetime.now(timezone.utc)
+
     rows = [
         (
             p["OrgKey"],
@@ -222,13 +254,14 @@ def write_processes_to_db(cursor, processes, cluster_map):
             cluster_map.get(p["ProjectKey"]),              # ClusterKey
             p.get("hostname"),                             # Name
             p.get("replicaSetName"),                       # ReplicaSetName
-            p.get("id"),                                   # SourceId
+            p.get("id"),                                   # ProcessId
             p.get("typeName"),                             # ProcessType
             json.dumps(p.get("links")) if p.get("links") is not None else None,  # Links
-            p.get("userAlias"),
-            p.get("version"),
-            p.get("created"),                              # SourceCreatedDate
-            p.get("lastPing"),                             # SourceUpdatedDate
+            p.get("userAlias"),                            # UserAlias
+            p.get("version"),                              # Version
+            p.get("created"),                              # ProcessCreatedDate
+            p.get("lastPing"),                             # ProcessUpdatedDate
+            verified_utc,                                  # VerifiedUtc
             audit_utc,                                     # AuditUtc
             "Lenticular",                                  # AuditUser
             0,                                             # IsDeleted
@@ -236,8 +269,9 @@ def write_processes_to_db(cursor, processes, cluster_map):
         for p in processes
     ]
 
-    cursor.executemany(query, rows)
-    logger.info(f"{len(rows)} process record(s) inserted into [AtlasMongoDB].[Process].")
+    for row in rows:
+        cursor.execute(merge_query, row)
+    logger.info(f"{len(rows)} process record(s) upserted into [AtlasMongoDB].[Process].")
 
 
 def main():
