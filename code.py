@@ -372,3 +372,25 @@ and collect metrics for right-sizing recommendations.
 6. Handle duplicate processes (upsert logic - update if exists)
 7. Schedule to run every 6 hours
 8. Log all errors and successes
+
+
+ork completed so far:
+
+1. Reviewed the MongoDB Atlas Metrics documentation 
+   shared by Neeraja
+
+2. Tested the MongoDB Atlas API in Postman successfully
+   - Called /processes endpoint - Status 200 OK
+   - Called /measurements endpoint for CPU metrics 
+   - Status 200 OK
+
+3. Understood the full architecture:
+   - Org → Projects → Clusters → Processes
+   - Processes must be mapped to clusters using 
+     ProjectKey and replicaSetName
+
+4. Code written for process inventory collection:
+   - Reads Orgs and Projects from database
+   - Calls MongoDB Atlas API per project
+   - Maps processes to clusters using ProjectKey
+   - Stores results in AtlasMongoDB.Processor table
