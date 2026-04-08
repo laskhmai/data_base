@@ -356,3 +356,19 @@ def main():
 # REQUIRED FOR PROD EXECUTION
 if __name__ == "__main__":
     main()
+
+
+
+    As a data engineer, I need to collect MongoDB Atlas 
+process inventory from all organizations and projects 
+every 6 hours so that we can map processes to clusters 
+and collect metrics for right-sizing recommendations.
+
+1. Read all Organizations from AtlasMongoDB.Organization table
+2. For each Org, read Projects from AtlasMongoDB.Projects table
+3. For each Project, call MongoDB Atlas API to get processes
+4. Map each process to its cluster using ProjectKey
+5. Store process info in AtlasMongoDB.Processor table
+6. Handle duplicate processes (upsert logic - update if exists)
+7. Schedule to run every 6 hours
+8. Log all errors and successes
