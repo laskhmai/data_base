@@ -393,9 +393,4 @@ ork completed so far:
    - Reads Orgs and Projects from database
    - Calls MongoDB Atlas API per project
    - Maps processes to clusters using ProjectKey
-   - Stores results in AtlasMongoDB.Processor table
-
-
-i Khwaja, for creating ADLS in Cloud 3.0, you'll need to create a regular Azure storage account first, then attach it to the data lake module. Here's the only template we have for this: https://github.com/Corp-Func-and-Ent-Sys-EMU/se-azure-DataLakeAnalytics-legacy-template-tfc — it hasn't been updated since 2023 but should work with Cloud 3 and current provider versions.
-    
-    ou can keep both in the same Terraform stack. Just add a depends_on clause pointing to your storage account resource inside the datalake module block. That way Terraform automatically creates the storage first before provisioning the data lake. 
+   - St
