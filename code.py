@@ -64,3 +64,24 @@ cluster_key = find_cluster_key(
  NEW - get full cluster list
     clusters = read_cluster_map(cursor)
     logger.info(f"Clusters loaded: {len(clusters)}")
+
+SELECT 
+    ProjectKey,
+    ClusterKey,
+    COUNT(*) as ProcessCount
+FROM [AtlasMongoDB].[Process]
+WHERE IsDeleted = 0
+GROUP BY ProjectKey, ClusterKey
+ORDER BY ProjectKey
+
+
+
+ # Handle ALL types
+    if "-shard" in user_alias:
+        cluster_prefix = user_alias.split("-shard")[0]
+    elif "-config" in user_alias:
+        cluster_prefix = user_alias.split("-config")[0]
+    elif "-mongos" in user_alias:
+        cluster_prefix = user_alias.split("-mongos")[0]
+    else:
+        cluster_prefix = user_alias.split(".")[0]
