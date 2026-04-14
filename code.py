@@ -1,3 +1,1 @@
-It was a local-exec provisioner error during Terraform APPLY on the Linux VMSS (dccc-seks-odm-res-prd-eu2-Mar2026-812-v4).
-The provisioner script is running curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash to install Azure CLI, but that's a Debian/Ubuntu installer. Our VM image is RHEL 8 (OOM_RES_PROD), so it tries to pull Ubuntu Bionic apt repos which now return 403 Forbidden (Bionic hit EOL).
-The error hits at line 700 of eca-linuxvmscaleset1linuxvmscaleset.tf in the eca-linuxvmscaleset module.
+dd
