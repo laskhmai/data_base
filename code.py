@@ -1,30 +1,3 @@
--- Drop and recreate with IDENTITY
-DROP TABLE [MongoDB].[Process];
-
-CREATE TABLE [MongoDB].[Process]
-(
-    ProcessKey          INT             NOT NULL IDENTITY(1,1),
-    OrgKey              INT             NOT NULL,
-    ProjectKey          INT             NULL,
-    ClusterKey          INT             NULL,
-    Name                NVARCHAR(500)   NOT NULL,
-    ReplicaSetName      NVARCHAR(500)   NULL,
-    ProcessId           NVARCHAR(500)   NOT NULL,
-    ProcessType         NVARCHAR(500)   NULL,
-    Links               NVARCHAR(500)   NULL,
-    UserAlias           NVARCHAR(500)   NULL,
-    Version             NVARCHAR(500)   NULL,
-    ProcessCreatedDate  DATETIME2(3)    NULL,
-    ProcessUpdatedDate  DATETIME2(3)    NULL,
-    VerifiedUtc         DATETIME2(3)    NULL,
-    AuditUtc            DATETIME2(3)    NOT NULL,
-    AuditUser           NVARCHAR(100)   NULL,
-    IsDeleted           BIT             NOT NULL DEFAULT 0
-);
-
-
-def normalize_org_name(org_name):
-    """
-    Normalizes organization names so lookups are case-insensitive.
-    """
-    return (org_name or "").strip().lower()
+It was a local-exec provisioner error during Terraform APPLY on the Linux VMSS (dccc-seks-odm-res-prd-eu2-Mar2026-812-v4).
+The provisioner script is running curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash to install Azure CLI, but that's a Debian/Ubuntu installer. Our VM image is RHEL 8 (OOM_RES_PROD), so it tries to pull Ubuntu Bionic apt repos which now return 403 Forbidden (Bionic hit EOL).
+The error hits at line 700 of eca-linuxvmscaleset1linuxvmscaleset.tf in the eca-linuxvmscaleset module.
