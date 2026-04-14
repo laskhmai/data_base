@@ -1,87 +1,64 @@
-def find_cluster_key(user_alias, project_key, clusters):
+def write_processes_to_db(cursor, processes, clusters):
     """
-    Match process to cluster using userAlias
-    against ConnectionStrings
-    
-    Example:
-    userAlias = "coreapi-accums-prod-shard-00-00.rwjvw.mongodb.net"
-    Extract  = "coreapi-accums-prod"
-    Match in ConnectionStrings of same project
+    Upserts process records into [MongoDB].[Process].
+    Uses explicit CHECK + UPDATE/INSERT for Synapse compatibility.
     """
-    if not user_alias:
-        return None
+    if not processes:
+        return
 
-    # Extract cluster prefix from userAlias
-    # "coreapi-accums-prod-shard-00-00.rwjvw.mongodb.net"
-    # becomes "coreapi-accums-prod"
-    cluster_prefix = user_alias.split("-shard")[0]
+    audit_utc = datetime.now(timezone.utc)
+    verified_utc = datetime.now(timezone.utc)
 
-    # Find matching cluster in same project
-    for cluster in clusters:
-        if cluster["ProjectKey"] == project_key:
-            conn_str = cluster["ConnectionStrings"] or ""
-            if cluster_prefix in conn_str:
-                return cluster["ClusterKey"]
-
-    return None  # No match found
-
-
-
-def read_cluster_map(cursor):
+    check_query = """
+        SELECT COUNT(*) FROM [MongoDB].[Process]
+        WHERE ProcessId = ? AND ProjectKey = ?
     """
-    Now returns ALL clusters with their
-    connection strings for proper matching
+
+    update_query = """
+        UPDATE [MongoDB].[Process]
+        SET OrgKey=?, ClusterKey=?, Name=?, ReplicaSetName=?,
+            ProcessType=?, Links=?, UserAlias=?, version=?,
+            ProcessUpdatedDate=?, VerifiedUtc=?, AuditUtc=?,
+            AuditUser=?, IsDeleted=?
+        WHERE ProcessId=? AND ProjectKey=?
     """
-    query = """
-        SELECT 
-            ClusterKey,
-            ProjectKey,
-            Name,
-            ConnectionStrings
-        FROM [AtlasMongoDB].[Clusters]
-        WHERE IsDeleted = 0
+
+    insert_query = """
+        INSERT INTO [MongoDB].[Process]
+            (OrgKey, ProjectKey, ClusterKey, Name, ReplicaSetName,
+             ProcessId, ProcessType, Links, UserAlias, version,
+             ProcessCreatedDate, ProcessUpdatedDate, VerifiedUtc,
+             AuditUtc, AuditUser, IsDeleted)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
-    cursor.execute(query)
-    clusters = []
-    for row in cursor.fetchall():
-        clusters.append({
-            "ClusterKey": row[0],
-            "ProjectKey": row[1],
-            "Name": row[2],
-            "ConnectionStrings": row[3]
-        })
-    return clusters
 
-
-
-cluster_key = find_cluster_key(
-            p.get("userAlias"),      # ← use userAlias
-            p["ProjectKey"],          # ← same project only
-            clusters                  # ← all clusters
+    for p in processes:
+        cluster_key = find_cluster_key(
+            p.get("userAlias"), p.get("ProjectKey"), clusters
         )
+        process_id  = p.get("id")
+        project_key = p.get("ProjectKey")
+        links       = json.dumps(p.get("links")) if p.get("links") is not None else None
 
+        cursor.execute(check_query, (process_id, project_key))
+        exists = cursor.fetchone()[0]
 
- NEW - get full cluster list
-    clusters = read_cluster_map(cursor)
-    logger.info(f"Clusters loaded: {len(clusters)}")
+        if exists:
+            cursor.execute(update_query, (
+                p.get("OrgKey"), cluster_key,
+                p.get("hostname"), p.get("replicaSetName"),
+                p.get("typeName"), links, p.get("userAlias"), p.get("version"),
+                p.get("lastPing"), verified_utc, audit_utc,
+                "Lenticular", 0,
+                process_id, project_key
+            ))
+        else:
+            cursor.execute(insert_query, (
+                p.get("OrgKey"), project_key, cluster_key,
+                p.get("hostname"), p.get("replicaSetName"),
+                process_id, p.get("typeName"), links, p.get("userAlias"), p.get("version"),
+                p.get("created"), p.get("lastPing"), verified_utc,
+                audit_utc, "Lenticular", 0
+            ))
 
-SELECT 
-    ProjectKey,
-    ClusterKey,
-    COUNT(*) as ProcessCount
-FROM [AtlasMongoDB].[Process]
-WHERE IsDeleted = 0
-GROUP BY ProjectKey, ClusterKey
-ORDER BY ProjectKey
-
-
-
- # Handle ALL types
-    if "-shard" in user_alias:
-        cluster_prefix = user_alias.split("-shard")[0]
-    elif "-config" in user_alias:
-        cluster_prefix = user_alias.split("-config")[0]
-    elif "-mongos" in user_alias:
-        cluster_prefix = user_alias.split("-mongos")[0]
-    else:
-        cluster_prefix = user_alias.split(".")[0]
+    logger.info(f"{len(processes)} process record(s) upserted into [MongoDB].[Process].")
