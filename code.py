@@ -21,3 +21,10 @@ CREATE TABLE [MongoDB].[Process]
     AuditUser           NVARCHAR(100)   NULL,
     IsDeleted           BIT             NOT NULL DEFAULT 0
 );
+
+
+def normalize_org_name(org_name):
+    """
+    Normalizes organization names so lookups are case-insensitive.
+    """
+    return (org_name or "").strip().lower()
