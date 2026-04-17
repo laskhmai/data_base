@@ -1,98 +1,75 @@
-INSERT INTO [Analytics].[MongoDBMetaConfig]
-(SkuName, Tier, vCores, MemorySizeGB, Instance, CostPrHour, Provider, Region)
-VALUES
--- =====================
--- AWS - us-east-2
--- =====================
--- Standard
-('M10',  'Standard', 2,   2,   'M10',  0.08,  'AWS', 'us-east-2'),
-('M20',  'Standard', 2,   4,   'M20',  0.22,  'AWS', 'us-east-2'),  -- ✅ Confirmed
-('M30',  'Standard', 2,   8,   'M30',  0.57,  'AWS', 'us-east-2'),
-('M40',  'Standard', 4,   16,  'M40',  1.09,  'AWS', 'us-east-2'),
-('M50',  'Standard', 8,   32,  'M50',  2.11,  'AWS', 'us-east-2'),
-('M60',  'Standard', 16,  64,  'M60',  4.17,  'AWS', 'us-east-2'),
-('M80',  'Standard', 32,  128, 'M80',  7.71,  'AWS', 'us-east-2'),
-('M140', 'Standard', 48,  192, 'M140', 11.60, 'AWS', 'us-east-2'),
-('M200', 'Standard', 64,  256, 'M200', 15.40, 'AWS', 'us-east-2'),
-('M300', 'Standard', 96,  384, 'M300', 23.06, 'AWS', 'us-east-2'),
--- Low CPU
-('M40',  'Low-CPU', 2,   16,  'M40-low-CPU',  0.82,  'AWS', 'us-east-2'),
-('M50',  'Low-CPU', 4,   32,  'M50-low-CPU',  1.56,  'AWS', 'us-east-2'),
-('M60',  'Low-CPU', 8,   64,  'M60-low-CPU',  3.08,  'AWS', 'us-east-2'),
-('M80',  'Low-CPU', 16,  128, 'M80-low-CPU',  5.92,  'AWS', 'us-east-2'),
-('M300', 'Low-CPU', 48,  384, 'M300-low-CPU', 17.56, 'AWS', 'us-east-2'),
-('M400', 'Low-CPU', 64,  512, 'M400-low-CPU', 23.64, 'AWS', 'us-east-2'),
-('M700', 'Low-CPU', 96,  768, 'M700-low-CPU', 35.10, 'AWS', 'us-east-2'),
--- NVMe
-('M40',  'NVMe', 4,   16,  'M40-NVME',  1.35,  'AWS', 'us-east-2'),
-('M50',  'NVMe', 8,   32,  'M50-NVME',  2.58,  'AWS', 'us-east-2'),
-('M60',  'NVMe', 16,  64,  'M60-NVME',  5.15,  'AWS', 'us-east-2'),
-('M80',  'NVMe', 32,  128, 'M80-NVME',  8.28,  'AWS', 'us-east-2'),
-('M200', 'NVMe', 64,  256, 'M200-NVME', 15.14, 'AWS', 'us-east-2'),
-('M400', 'NVMe', 128, 512, 'M400-NVME', 28.13, 'AWS', 'us-east-2'),
+MongoDB Atlas - SKU Research
+User Story 8857416  |  April 2026
 
--- =====================
--- Azure - East US 2
--- =====================
--- Standard (no M140 or M300 on Azure)
-('M10',  'Standard', 2,   2,   'M10',  0.08,  'Azure', 'East US 2'),
-('M20',  'Standard', 2,   4,   'M20',  0.20,  'Azure', 'East US 2'),
-('M30',  'Standard', 2,   8,   'M30',  0.54,  'Azure', 'East US 2'),
-('M40',  'Standard', 4,   16,  'M40',  1.05,  'Azure', 'East US 2'),
-('M50',  'Standard', 8,   32,  'M50',  2.06,  'Azure', 'East US 2'),
-('M60',  'Standard', 16,  64,  'M60',  3.93,  'Azure', 'East US 2'),
-('M80',  'Standard', 32,  128, 'M80',  7.83,  'Azure', 'East US 2'),
-('M200', 'Standard', 64,  256, 'M200', 14.40, 'Azure', 'East US 2'),
--- Low CPU
-('M40',  'Low-CPU', 2,   16,  'M40-low-CPU',  0.89,  'Azure', 'East US 2'),
-('M50',  'Low-CPU', 4,   32,  'M50-low-CPU',  1.75,  'Azure', 'East US 2'),
-('M60',  'Low-CPU', 8,   64,  'M60-low-CPU',  3.30,  'Azure', 'East US 2'),
-('M80',  'Low-CPU', 16,  128, 'M80-low-CPU',  6.56,  'Azure', 'East US 2'),
-('M200', 'Low-CPU', 32,  256, 'M200-low-CPU', 12.02, 'Azure', 'East US 2'),
-('M300', 'Low-CPU', 48,  384, 'M300-low-CPU', 17.55, 'Azure', 'East US 2'),
-('M400', 'Low-CPU', 64,  512, 'M400-low-CPU', 21.89, 'Azure', 'East US 2'),
--- NVMe
-('M60',  'NVMe', 16,  64,  'M60-NVME',  5.58,  'Azure', 'East US 2'),
-('M80',  'NVMe', 32,  128, 'M80-NVME',  10.38, 'Azure', 'East US 2'),
-('M200', 'NVMe', 64,  256, 'M200-NVME', 20.67, 'Azure', 'East US 2'),
-('M300', 'NVMe', 96,  384, 'M300-NVME', 30.27, 'Azure', 'East US 2'),
-('M400', 'NVMe', 128, 512, 'M400-NVME', 39.86, 'Azure', 'East US 2'),  -- ✅ Confirmed
-('M600', 'NVMe', 192, 640, 'M600-NVME', 49.46, 'Azure', 'East US 2'),  -- ✅ Confirmed
+1. What are MongoDB SKUs?
+MongoDB Atlas clusters come in different sizes called SKUs (Stock Keeping Units). Each SKU has a fixed amount of CPU, RAM, and storage. You pick the SKU based on how much load your database needs to handle.
 
--- =====================
--- GCP - us-east4
--- =====================
--- Standard
-('M10',  'Standard', 2,   2,   'M10',  0.10,  'GCP', 'us-east4'),
-('M20',  'Standard', 2,   4,   'M20',  0.22,  'GCP', 'us-east4'),
-('M30',  'Standard', 2,   8,   'M30',  0.52,  'GCP', 'us-east4'),
-('M40',  'Standard', 4,   16,  'M40',  1.02,  'GCP', 'us-east4'),
-('M50',  'Standard', 8,   32,  'M50',  1.97,  'GCP', 'us-east4'),
-('M60',  'Standard', 16,  64,  'M60',  3.90,  'GCP', 'us-east4'),
-('M80',  'Standard', 32,  128, 'M80',  7.27,  'GCP', 'us-east4'),
-('M140', 'Standard', 48,  192, 'M140', 11.00, 'GCP', 'us-east4'),
-('M200', 'Standard', 64,  256, 'M200', 15.37, 'GCP', 'us-east4'),
-('M250', 'Standard', 80,  320, 'M250', 18.80, 'GCP', 'us-east4'),
-('M300', 'Standard', 96,  384, 'M300', 23.00, 'GCP', 'us-east4'),
--- Low CPU
-('M40',  'Low-CPU', 2,   16,  'M40-low-CPU',  0.81,  'GCP', 'us-east4'),
-('M50',  'Low-CPU', 4,   32,  'M50-low-CPU',  1.56,  'GCP', 'us-east4'),
-('M60',  'Low-CPU', 8,   64,  'M60-low-CPU',  3.08,  'GCP', 'us-east4'),
-('M80',  'Low-CPU', 16,  128, 'M80-low-CPU',  5.75,  'GCP', 'us-east4'),
-('M200', 'Low-CPU', 32,  256, 'M200-low-CPU', 12.12, 'GCP', 'us-east4'),
-('M300', 'Low-CPU', 48,  384, 'M300-low-CPU', 18.20, 'GCP', 'us-east4'),
-('M400', 'Low-CPU', 64,  512, 'M400-low-CPU', 24.91, 'GCP', 'us-east4'),
-('M600', 'Low-CPU', 96,  640, 'M600-low-CPU', 31.81, 'GCP', 'us-east4');
--- Note: GCP does not support NVMe
+One thing to keep in mind - each MongoDB Atlas cluster has ONE SKU, not per process. All processes in a cluster share the same instance class (M10, M30, M60, etc.). So when right-sizing, you aggregate all processes first and give ONE recommendation per cluster.
 
+2. Tier Types
+There are 3 tier types across providers:
 
-CREATE TABLE [Analytics].[MongoDBMetaConfig] (
-    [Id]             INT IDENTITY(1,1)    NOT NULL,
-    [SkuName]        VARCHAR(50)          NOT NULL,
-    [Tier]           VARCHAR(50)          NOT NULL,
-    [vCores]         INT                  NOT NULL,
-    [MemorySizeGB]   INT                  NOT NULL,
-    [Instance]       VARCHAR(50)          NOT NULL,
-    [CostPrHour]     DECIMAL(10,2)        NOT NULL,
-    [Provider]       VARCHAR(20)          NOT NULL,
-    [Region]         VARCHAR(50)          NOT NULL,
+-	Standard - General purpose, balanced CPU and memory
+-	Low-CPU - Same memory as Standard but half the vCPUs. Cheaper when CPU is not the bottleneck
+-	NVMe - Local NVMe SSD storage, very high IOPS. Available on AWS and Azure only - not supported on GCP
+
+3. What Got Loaded into the DB
+Pricing data was manually pulled from the MongoDB Atlas pricing calculator for 3 providers and loaded into Analytics.MongoDBMetaConfig.
+
+Provider	Region	Standard	Low-CPU	NVMe	Total
+AWS	us-east-2 (Ohio)	10	7	6	23
+Azure	East US 2	8	7	6	21
+GCP	us-east4 (N. Virginia)	11	8	0	19
+Total	-	29	22	12	63
+
+Azure does not have M140 or M300 in Standard tier.
+GCP does not support NVMe.
+AWS has M700-low-CPU which Azure and GCP do not.
+GCP has M250 (320GB RAM) which AWS and Azure do not have.
+
+4. Database Table
+Table created in [Analytics] schema to store SKU pricing data:
+
+CREATE TABLE [Analytics].[MongoDBMetaConfig]
+(
+    Id              INT IDENTITY(1,1)  NOT NULL,
+    SkuName         VARCHAR(50)        NOT NULL,
+    Tier            VARCHAR(50)        NOT NULL,   -- Standard / Low-CPU / NVMe
+    vCores          INT                NOT NULL,
+    MemorySizeGB    INT                NOT NULL,
+    Instance        VARCHAR(50)        NOT NULL,
+    CostPrHour      DECIMAL(10,2)      NOT NULL,
+    Provider        VARCHAR(20)        NOT NULL,   -- AWS / Azure / GCP
+    Region          VARCHAR(50)        NOT NULL,
+    CreatedDate     DATETIME           NOT NULL  DEFAULT GETDATE(),
+    IsActive        BIT                NOT NULL  DEFAULT 1
+);
+
+5. MongoDB Atlas APIs
+Two APIs are available to pull SKU and region data programmatically if needed later:
+
+API 1 - Get All Instance Sizes and Regions:
+GET https://cloud.mongodb.com/api/atlas/v1/groups/{groupId}/clusters/provider/regions
+Returns all providers (AWS/GCP/Azure), instance sizes, available regions per SKU, and default region flags.
+
+API 2 - Get Available MongoDB Versions:
+GET https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/mongoDBVersions
+Returns instanceSize, cloudProvider, version, and defaultStatus per SKU.
+
+6. References
+
+Official MongoDB Pricing:
+https://www.mongodb.com/pricing
+https://www.mongodb.com/pricing/calculator
+
+Instance Size Reference Docs:
+AWS:   https://www.mongodb.com/docs/atlas/reference/amazon-aws/
+Azure: https://www.mongodb.com/docs/atlas/reference/microsoft-azure/
+GCP:   https://www.mongodb.com/docs/atlas/reference/google-gcp/
+
+Atlas Admin API:
+https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/
+https://www.mongodb.com/docs/atlas/billing/cluster-configuration-costs/
+
+Cluster Sizing Guide:
+https://www.mongodb.com/docs/atlas/sizing-tier-selection/
