@@ -84,3 +84,15 @@ VALUES
 ('M400', 'Low-CPU', 64,  512, 'M400-low-CPU', 24.91, 'GCP', 'us-east4'),
 ('M600', 'Low-CPU', 96,  640, 'M600-low-CPU', 31.81, 'GCP', 'us-east4');
 -- Note: GCP does not support NVMe
+
+
+CREATE TABLE [Analytics].[MongoDBMetaConfig] (
+    [Id]             INT IDENTITY(1,1)    NOT NULL,
+    [SkuName]        VARCHAR(50)          NOT NULL,
+    [Tier]           VARCHAR(50)          NOT NULL,
+    [vCores]         INT                  NOT NULL,
+    [MemorySizeGB]   INT                  NOT NULL,
+    [Instance]       VARCHAR(50)          NOT NULL,
+    [CostPrHour]     DECIMAL(10,2)        NOT NULL,
+    [Provider]       VARCHAR(20)          NOT NULL,
+    [Region]         VARCHAR(50)          NOT NULL,
