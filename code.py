@@ -1,23 +1,12 @@
--- Check total process count
-SELECT COUNT(*) AS TotalProcesses
-FROM [MongoDB].[Process]
+Hi Bhupendra,
 
--- Check processes per org
-SELECT 
-    o.Name AS OrgName,
-    COUNT(p.ProcessKey) AS ProcessCount
-FROM [MongoDB].[Process] p
-JOIN [MongoDB].[Organization] o 
-    ON p.OrgKey = o.OrgKey
-GROUP BY o.Name
-ORDER BY ProcessCount DESC
+This is NOT a Terraform issue. Terraform is working correctly:
+✅ VM created successfully
+✅ Extension triggered correctly
 
--- Check latest processes inserted
-SELECT TOP 20
-    ProcessKey,
-    Name,
-    ProcessType,
-    UserAlias,
-    ProcessUpdatedDate
-FROM [MongoDB].[Process]
-ORDER BY ProcessKey DESC
+The issue is with the gatewayInstall.ps1 script itself - it is failing during gateway installation (exit code 1).
+
+This could be due to a stale gateway file from previous failed attempt. We need to check the logs on the VM at:
+C:\WindowsAzure\Logs\Plugins\Microsoft.Compute.CustomScriptExtension\tracelog.log
+
+Can we get RDP access via StrongDM to check?
