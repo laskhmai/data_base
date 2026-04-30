@@ -1,276 +1,543 @@
-1. What are MongoDB SKUs?
-MongoDB Atlas clusters come in different sizes called SKUs (Stock Keeping Units). Each SKU has a fixed amount of CPU, RAM, and storage. You pick the SKU based on how much load your database needs to handle.
-
-Each MongoDB Atlas cluster has ONE SKU, not per process. All processes in a cluster share the same instance class (M10, M30, M60 etc.). So when right-sizing, you aggregate all processes first and give ONE recommendation per cluster.
-
-2. Tier Types
-There are 3 tier types across providers:
-
--Standard - General purpose, balanced CPU and memory
--Low-CPU - Same memory as Standard but half the vCPUs. Cheaper when CPU is not the bottleneck
--NVMe - Local NVMe SSD storage, very high IOPS. Available on AWS and Azure only - not supported on GCP
-
-3. How MongoDB Pricing Works
-Total price = Compute + Storage (+ extras if used). MongoDB pricing is based on the size of the cluster (e.g. M30), how many nodes it runs, the cloud and region, and how much storage is used. Compute is charged per hour, storage per GB.
-
-3.1  Cluster Tier  (Primary Pricing Driver)
-What it controls:
--RAM
--vCPUs
--Baseline performance
-
-Effect on pricing:
--Higher tier = higher fixed hourly cost
--Example: M20 < M30 < M40 < M50
-
-Why it matters:
--RAM must fit the working set
--CPU must handle peak operations
-
-This is ~60-70% of total cost
-
-3.2  Node Count / Replica Set Size
-What it controls:
--High availability
--Fault tolerance
--Read scaling
-
-Effect on pricing:
--Cost is per node
--3-node replica set = standard
--5 or 7 nodes = linear cost increase
-
-Formula:
-Total Compute Cost = Tier Cost x Number of Nodes
-
-3.3  Cloud Provider
-Options:  AWS  |  Azure  |  GCP
-
-Effect on pricing:
--Same tier does not mean same price
--Driven by underlying VM and disk costs
-
-Example:
-M30 on AWS  <  M30 on Azure  (in most regions)
-
-Important for enterprise Azure/AWS marketplace deployments
-
-3.4  Region (Geography)
-Effect on pricing:
--Infrastructure availability and local taxes
--Compliance regions cost more
-
-Cheapest to Most Expensive (typical):
-US East  ->  US West  ->  EU  ->  APAC  ->  Gov/Isolated
-
-Can change cost 15-40% without changing SKU
-
-3.5  Storage Size (GB)
-Charged separately from compute.
-
-Effect on pricing:
--Cost per GB per month
--Grows continuously with data
-
-Includes:
--Data
--Indexes (often 20-50% of data size)
-
-3.6  Storage Type / IOPS Tier
-SKU options:
--Standard storage
--High-performance / high-IOPS storage
-
-Effect on pricing:
--High-IOPS disks cost significantly more
-
-Use high IOPS only if:
--Heavy write workloads
--Disk-bound queries
-
-3.7  Backup Configuration
-Often overlooked but SKU-linked.
-
-Effect on pricing:
--Snapshot storage (GB/month)
--Backup retention period
--Restore traffic
-
-Cost increases with:
-Longer retention  +  Larger dataset
-
-Backups can add 20-40% to cluster cost
-
-3.8  Data Transfer (Egress)
-Not visible in SKU name, but tied to deployment.
-
-Effect on pricing:
--Charged per GB leaving the cluster
--Cross-region > Internet egress > same-VPC
-
-Key scenarios:
--Multi-region apps
--Analytics exports
--DR replication
-
-3.9  Optional Atlas Features (Feature SKUs)
-These are add-on pricing dimensions.
-
-Examples:
--Atlas Search
--Vector Search
--Data Federation
--Online Archive
-
-Effect on pricing:
--Usage-based (index size, queries, data scanned)
-
-Can double cost if enabled without tracking
-
-3.10  Pricing Impact Summary
-
-Factor	Pricing Impact
-Cluster tier	Very High
-Node count	Very High
-Cloud provider	Medium
-Region	Medium
-Storage size	Medium
-Storage type	Medium
-Backups	Medium
-Data egress	Variable
-Features	Variable
-
-One-Sentence Summary:
-MongoDB SKU pricing is determined by cluster tier (RAM/CPU), number of nodes, cloud provider, region, storage size and type, backup configuration, data transfer, and enabled Atlas features.
-
-4. Burstable, Free and Flex Tiers
-
-4.1  Burstable
-Burstable instances are clusters where the CPU is not fully dedicated — they can burst when needed but are not guaranteed. In MongoDB Atlas, M10, M20 and M30 run on burstable cloud VMs (like AWS T3 instances). They have dedicated RAM but the CPU can burst under load.
-
-SKU	Tier	Why Burstable
-M10	Standard	Dedicated RAM but runs on burstable VM — CPU can burst
-M20	Standard	Dedicated RAM but runs on burstable VM — CPU can burst
-M30	Standard	Dedicated RAM but runs on burstable VM — CPU can burst
-
-M40 and above are fully dedicated fixed CPU — NOT burstable.
-
-In the MetaConfig table, these are identified by updating the Tier column:
-
-UPDATE [Analytics].[MongoDBMetaConfig]
-SET Tier = 'Burstable'
-WHERE SkuName IN ('M10', 'M20', 'M30');
-
-4.2  Free Tier
-Free tier clusters are completely free forever. They run on shared infrastructure with very limited resources. They are used for learning and exploring MongoDB in a cloud environment only — not for production.
-
-SKU	Storage	RAM	vCPU	Cost
-M0	512 MB	Shared	Shared	$0.00/hr
-
-How to identify Free tier in the Clusters table — Free clusters have diskSizeGB of exactly 0.5 in the ReplicationSpecs JSON column:
-
-SELECT clusterid, ReplicationSpecs
-FROM [MongoDB].[Clusters]
-WHERE ReplicationSpecs LIKE '%"diskSizeGB": 0.5%';
-
-4.3  Flex Tier
-Flex tier is for application development and testing. Resources and costs scale to your needs. Still runs on shared infrastructure. Costs up to $30/month maximum.
-
-SKU	Storage	RAM	vCPU	Cost
-M2/M5	Up to 5 GB	Shared	Shared	$0.011/hr
-
-How to identify Flex tier in the Clusters table — Flex clusters have diskSizeGB between 1.0 and 5.0 in the ReplicationSpecs JSON column:
-
-SELECT clusterid, ReplicationSpecs
-FROM [MongoDB].[Clusters]
-WHERE ReplicationSpecs LIKE '%"diskSizeGB": 1.0%'
-   OR ReplicationSpecs LIKE '%"diskSizeGB": 2.0%'
-   OR ReplicationSpecs LIKE '%"diskSizeGB": 3.0%'
-   OR ReplicationSpecs LIKE '%"diskSizeGB": 4.0%'
-   OR ReplicationSpecs LIKE '%"diskSizeGB": 5.0%';
-
-4.4  Query to Find All Free and Flex Clusters
-Run this query to check if any Free or Flex clusters exist in your actual cluster data:
-
-SELECT
-    clusterid,
-    CASE
-        WHEN ReplicationSpecs LIKE '%"diskSizeGB": 0.5%' THEN 'Free'
-        ELSE 'Flex'
-    END AS TierType
-FROM [MongoDB].[Clusters]
-WHERE
-    ReplicationSpecs LIKE '%"diskSizeGB": 0.5%'   -- Free (512MB)
-    OR ReplicationSpecs LIKE '%"diskSizeGB": 1.0%' -- Flex
-    OR ReplicationSpecs LIKE '%"diskSizeGB": 2.0%' -- Flex
-    OR ReplicationSpecs LIKE '%"diskSizeGB": 3.0%' -- Flex
-    OR ReplicationSpecs LIKE '%"diskSizeGB": 4.0%' -- Flex
-    OR ReplicationSpecs LIKE '%"diskSizeGB": 5.0%' -- Flex
-ORDER BY TierType, clusterid;
-
-Note: diskSizeGB is stored inside the ReplicationSpecs JSON column in the Clusters table. We use LIKE with exact decimal values (0.5, 1.0 etc) to avoid matching larger sizes like 128.0 or 1024.0.
-
-5. What Got Loaded into the DB
-4. What Got Loaded into the DB
-The Analytics.MongoDBMetaConfig table was created by Jayanth Paluri as part of this user story. All SKU pricing data was manually researched by going through the MongoDB Atlas pricing calculator for each provider, tier, and instance size one by one, and then inserted into the table.
-
-Pricing data was pulled for 3 providers and loaded into Analytics.MongoDBMetaConfig.
-
-Provider	Region	Standard	Low-CPU	NVMe	Total
-AWS	us-east-2 (Ohio)	10	7	6	23
-Azure	East US 2	8	7	6	21
-GCP	us-east4 (N. Virginia)	11	8	0	19
-Total	-	29	22	12	63
-
-Azure does not have M140 or M300 in Standard tier.
-GCP does not support NVMe.
-AWS has M700-low-CPU which Azure and GCP do not have.
-GCP has M250 (320GB RAM) which AWS and Azure do not have.
-Free and Flex tiers are not included - these are shared/serverless and not relevant for right-sizing.
-
-5. Database Table
-Table created by Jayanth Paluri in [Analytics] schema to store MongoDB Atlas SKU pricing reference data. This table is used for cost optimization and right-sizing recommendations.
-
-CREATE TABLE [Analytics].[MongoDBMetaConfig]
+/*
+===============================================================================
+  DDL — Run ONCE to create the target table
+===============================================================================
+*/
+CREATE TABLE [Metrics].[MongoDBRightsizingAggregatedHourly]
 (
-    Id              INT IDENTITY(1,1)  NOT NULL,
-    SkuName         VARCHAR(50)        NOT NULL,
-    Tier            VARCHAR(50)        NOT NULL,   -- Standard / Low-CPU / NVMe
-    vCores          INT                NOT NULL,
-    MemorySizeGB    INT                NOT NULL,
-    Instance        VARCHAR(50)        NOT NULL,
-    CostPrHour      DECIMAL(10,2)      NOT NULL,
-    Provider        VARCHAR(20)        NOT NULL,   -- AWS / Azure / GCP
-    Region          VARCHAR(50)        NOT NULL,
-    CreatedDate     DATETIME           NOT NULL  DEFAULT GETDATE(),
-    IsActive        BIT                NOT NULL  DEFAULT 1
+    -- Surrogate key
+    Id                  BIGINT IDENTITY(1,1)    NOT NULL,
+
+    -- Identity
+    ClusterKey          INT                     NOT NULL,   -- FK to [MongoDB].[Clusters]
+    ClusterName         NVARCHAR(255)           NULL,       -- e.g. coreapi-accums-qa
+    ProcessId           NVARCHAR(255)           NOT NULL,   -- e.g. atlas-shard-00-00.mongodb.net:27017
+    ProcessType         NVARCHAR(50)            NULL,       -- REPLICA_PRIMARY / REPLICA_SECONDARY
+    ReplicaSetName      NVARCHAR(255)           NULL,       -- e.g. atlas-a2t3dq-shard-0
+    ProjectKey          INT                     NULL,       -- FK to [MongoDB].[Projects]
+    OrgKey              INT                     NULL,       -- FK to [MongoDB].[Organization]
+
+    -- SKU / Infrastructure (parsed from ReplicationSpecs JSON in Clusters table)
+    InstanceSize        NVARCHAR(20)            NULL,       -- e.g. M20, M30, M40
+    ProviderName        NVARCHAR(50)            NULL,       -- e.g. AZURE
+    RegionName          NVARCHAR(100)           NULL,       -- e.g. US_EAST_2
+
+    -- Time dimensions
+    DateTimeEST         DATETIME                NOT NULL,   -- hourly bucket in EST
+    _date               DATE                    NOT NULL,
+    _hour               INT                     NOT NULL,   -- 0-23
+    [type]              NVARCHAR(10)            NOT NULL,   -- Weekday / Weekend
+    businessHour        NVARCHAR(20)            NOT NULL,   -- BusinessHours / NonBusinessHours
+
+    -- CPU (% normalized across cores — per process)
+    CpuAvg              FLOAT                   NULL,       -- avg cpu % across the hour
+    CpuMax              FLOAT                   NULL,       -- peak cpu % in the hour
+    CpuMaxGt50          INT                     NULL,       -- readings where peak cpu > 50%
+    CpuMaxGt25          INT                     NULL,       -- readings where peak cpu > 25%
+    CpuMaxGt10          INT                     NULL,       -- readings where peak cpu > 10%
+
+    -- Memory Resident (MEGABYTES — per process)
+    MemResidentMax      FLOAT                   NULL,       -- peak MB used
+    MemResidentAvg      FLOAT                   NULL,       -- avg MB used
+
+    -- Memory Available (KILOBYTES — per process)
+    MemAvailableMin     FLOAT                   NULL,       -- lowest free KB in the hour
+
+    -- Connections (count — per process)
+    ConnectionsMax      FLOAT                   NULL,       -- peak connections
+    ConnectionsAvg      FLOAT                   NULL,       -- avg connections
+
+    -- Opcounters (ops/sec — per process)
+    OpcQueryMax         FLOAT                   NULL,       -- peak query ops/sec
+    OpcInsertMax        FLOAT                   NULL,       -- peak insert ops/sec
+
+    CONSTRAINT PK_MongoDBRightsizingAggregatedHourly
+        PRIMARY KEY CLUSTERED (Id ASC)
 );
+GO
 
-6. MongoDB Atlas APIs
-Two APIs are available to pull SKU and region data programmatically if needed later:
+-- Index for upsert matching
+CREATE NONCLUSTERED INDEX IX_MongoDB_Rightsizing_Upsert
+    ON [Metrics].[MongoDBRightsizingAggregatedHourly]
+    (ProcessId, DateTimeEST, _date, _hour, [type], businessHour);
+GO
 
-API 1 - Get All Instance Sizes and Regions:
-GET https://cloud.mongodb.com/api/atlas/v1/groups/{groupId}/clusters/provider/regions
-Returns all providers (AWS/GCP/Azure), instance sizes, available regions per SKU, and default region flags.
+-- Index for reporting by cluster
+CREATE NONCLUSTERED INDEX IX_MongoDB_Rightsizing_Cluster
+    ON [Metrics].[MongoDBRightsizingAggregatedHourly]
+    (ClusterKey, _date, ProcessType);
+GO
 
-API 2 - Get Available MongoDB Versions:
-GET https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/mongoDBVersions
-Returns instanceSize, cloudProvider, version, and defaultStatus per SKU.
 
-7. References
+/*
+===============================================================================
+  STORED PROCEDURE
+===============================================================================
+*/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
 
-Official MongoDB Pricing:
-https://www.mongodb.com/pricing
-https://www.mongodb.com/pricing/calculator
+ALTER PROC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics] AS
+BEGIN
+    SET NOCOUNT ON;
 
-Instance Size Reference Docs:
-AWS:   https://www.mongodb.com/docs/atlas/reference/amazon-aws/
-Azure: https://www.mongodb.com/docs/atlas/reference/microsoft-azure/
-GCP:   https://www.mongodb.com/docs/atlas/reference/google-gcp/
+    --DECLARE @StartDate DATE = '2026-04-20';
+    --DECLARE @EndDate   DATE = '2026-04-28';
 
-Atlas Admin API:
-https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/
-https://www.mongodb.com/docs/atlas/billing/cluster-configuration-costs/
+    -- Default: last 7 days rolling
+    DECLARE @StartDT DATE = DATEADD(DAY, -7, CAST(GETDATE() AS DATE));
+    DECLARE @EndDT   DATE = DATEADD(DAY, +1, CAST(GETDATE() AS DATE));
 
-Cluster Sizing Guide:
-https://www.mongodb.com/docs/atlas/sizing-tier-selection/
+    --------------------------------------------------------------------------
+    -- Drop temp tables if they exist
+    --------------------------------------------------------------------------
+    IF OBJECT_ID('tempdb..#CpuAvg')      IS NOT NULL DROP TABLE #CpuAvg;
+    IF OBJECT_ID('tempdb..#CpuMax')      IS NOT NULL DROP TABLE #CpuMax;
+    IF OBJECT_ID('tempdb..#MemResident') IS NOT NULL DROP TABLE #MemResident;
+    IF OBJECT_ID('tempdb..#MemAvail')    IS NOT NULL DROP TABLE #MemAvail;
+    IF OBJECT_ID('tempdb..#Conns')       IS NOT NULL DROP TABLE #Conns;
+    IF OBJECT_ID('tempdb..#OpcQuery')    IS NOT NULL DROP TABLE #OpcQuery;
+    IF OBJECT_ID('tempdb..#OpcInsert')   IS NOT NULL DROP TABLE #OpcInsert;
+    IF OBJECT_ID('tempdb..#Keys')        IS NOT NULL DROP TABLE #Keys;
+    IF OBJECT_ID('tempdb..#FinalMetrics')IS NOT NULL DROP TABLE #FinalMetrics;
+
+    --------------------------------------------------------------------------
+    -- HELPER: Convert DateTime to EST hour bucket
+    -- All metrics tables have a DateTime column in UTC
+    -- SWITCHOFFSET converts to EST (-05:00)
+    -- DATEADD/DATEDIFF truncates to the hour
+    --------------------------------------------------------------------------
+
+    --------------------------------------------------------------------------
+    -- 1. CPU AVG
+    --    Source : MongoDB_System_Normalized_Cpu_User_15M
+    --    Unit   : Percent (normalized across cores)
+    --    Per    : Process per hour
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuAvg,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket              AS DateTimeEST,
+        COALESCE(CpuAvg, 0)    AS CpuAvg
+    INTO #CpuAvg
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 2. CPU MAX
+    --    Source : MongoDB_System_Normalized_Cpu_User_Max_15M
+    --    Unit   : Percent (normalized across cores)
+    --    Per    : Process per hour
+    --    Note   : Thresholds use 50/25/10 NOT 88/50/25
+    --             because normalized CPU rarely exceeds 88%
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuMax,
+            -- Gt50: high pressure
+            SUM(CASE WHEN Measurement > 50 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt50,
+            -- Gt25: medium pressure
+            SUM(CASE WHEN Measurement > 25 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt25,
+            -- Gt10: light pressure / not idle
+            SUM(CASE WHEN Measurement > 10 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt10,
+            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
+                               ORDER BY (SELECT 0))                AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                  AS DateTimeEST,
+        COALESCE(CpuMax, 0)        AS CpuMax,
+        COALESCE(CpuMaxGt50, 0)    AS CpuMaxGt50,
+        COALESCE(CpuMaxGt25, 0)    AS CpuMaxGt25,
+        COALESCE(CpuMaxGt10, 0)    AS CpuMaxGt10
+    INTO #CpuMax
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 3. MEMORY RESIDENT
+    --    Source : MongoDB_Memory_Resident_15M
+    --    Unit   : MEGABYTES
+    --    Per    : Process per hour
+    --    Note   : No % thresholds — compare raw MB vs tier RAM in reporting
+    --             M20=8GB, M30=16GB, M40=32GB, M50=64GB
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_Memory_Resident_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS MemResidentMax,
+            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS MemResidentAvg,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                      AS DateTimeEST,
+        COALESCE(MemResidentMax, 0)    AS MemResidentMax,
+        COALESCE(MemResidentAvg, 0)    AS MemResidentAvg
+    INTO #MemResident
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 4. MEMORY AVAILABLE
+    --    Source : MongoDB_System_Memory_Available_15M
+    --    Unit   : KILOBYTES
+    --    Per    : Process per hour
+    --    Note   : MIN = worst case free memory in the hour
+    --             If near zero = process is memory starved
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_System_Memory_Available_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MIN(Measurement) OVER (PARTITION BY [key], HourBucket) AS MemAvailableMin,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                      AS DateTimeEST,
+        COALESCE(MemAvailableMin, 0)   AS MemAvailableMin
+    INTO #MemAvail
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 5. CONNECTIONS
+    --    Source : MongoDB_Connections_15M
+    --    Unit   : Scalar (count)
+    --    Per    : Process per hour
+    --    Note   : Each tier has a hard connection limit
+    --             M20=3000, M30=6000, M40=16000
+    --             Report layer compares max vs tier limit
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_Connections_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS ConnectionsMax,
+            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS ConnectionsAvg,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                      AS DateTimeEST,
+        COALESCE(ConnectionsMax, 0)    AS ConnectionsMax,
+        COALESCE(ConnectionsAvg, 0)    AS ConnectionsAvg
+    INTO #Conns
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 6. OPCOUNTER QUERY
+    --    Source : MongoDB_Opcounter_Query_15M
+    --    Unit   : Scalar_P (ops/sec)
+    --    Per    : Process per hour
+    --    Note   : Queries can hit PRIMARY or SECONDARY
+    --             MAX tells you peak read pressure
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_Opcounter_Query_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS OpcQueryMax,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                  AS DateTimeEST,
+        COALESCE(OpcQueryMax, 0)   AS OpcQueryMax
+    INTO #OpcQuery
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 7. OPCOUNTER INSERT
+    --    Source : MongoDB_Opcounter_Insert_15M
+    --    Unit   : Scalar_P (ops/sec)
+    --    Per    : Process per hour
+    --    Note   : Inserts ONLY go to PRIMARY
+    --             High insert rate on PRIMARY = write pressure = scale up signal
+    --------------------------------------------------------------------------
+    ;WITH Raw AS (
+        SELECT
+            [key],
+            DATEADD(HOUR, DATEDIFF(HOUR, 0,
+                SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS HourBucket,
+            Measurement
+        FROM [Metrics].[MongoDB_Opcounter_Insert_15M]
+        WHERE DateTime >= @StartDT
+          AND DateTime <  @EndDT
+    ),
+    Win AS (
+        SELECT
+            [key],
+            HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS OpcInsertMax,
+            ROW_NUMBER()     OVER (PARTITION BY [key], HourBucket
+                                   ORDER BY (SELECT 0))             AS rn
+        FROM Raw
+    )
+    SELECT
+        [key],
+        HourBucket                  AS DateTimeEST,
+        COALESCE(OpcInsertMax, 0)  AS OpcInsertMax
+    INTO #OpcInsert
+    FROM Win
+    WHERE rn = 1;
+
+    --------------------------------------------------------------------------
+    -- 8. Keys spine
+    --    Union ALL process+hour combos that appeared in ANY metric table
+    --    This ensures no hour is lost even if one metric had no data
+    --------------------------------------------------------------------------
+    SELECT [key], DateTimeEST INTO #Keys FROM #CpuAvg
+    UNION SELECT [key], DateTimeEST FROM #CpuMax
+    UNION SELECT [key], DateTimeEST FROM #MemResident
+    UNION SELECT [key], DateTimeEST FROM #MemAvail
+    UNION SELECT [key], DateTimeEST FROM #Conns
+    UNION SELECT [key], DateTimeEST FROM #OpcQuery
+    UNION SELECT [key], DateTimeEST FROM #OpcInsert;
+
+    --------------------------------------------------------------------------
+    -- 9. Final assembly
+    --    Join chain:
+    --      #Keys.[key]
+    --        = [MongoDB].[Process].ProcessId     (get process context)
+    --        → [MongoDB].[Process].ClusterKey
+    --          = [MongoDB].[Clusters].ClustersKey (get SKU from JSON)
+    --
+    --    No GROUP BY — stays at process level
+    --    One row per process per hour
+    --
+    --    InstanceSize parsed from ReplicationSpecs JSON:
+    --    JSON path may need adjusting based on your exact JSON structure
+    --    Run: SELECT TOP 1 ReplicationSpecs FROM [MongoDB].[Clusters]
+    --    to verify the path
+    --------------------------------------------------------------------------
+    SELECT
+        -- Identity
+        p.ClusterKey,
+        cl.Name                                                         AS ClusterName,
+        k.[key]                                                         AS ProcessId,
+        p.ProcessType,
+        p.ReplicaSetName,
+        p.ProjectKey,
+        p.OrgKey,
+
+        -- SKU from Clusters.ReplicationSpecs JSON
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].electableSpecs.instanceSize')        AS InstanceSize,
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].providerName')                       AS ProviderName,
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].regionName')                         AS RegionName,
+
+        -- Time
+        k.DateTimeEST,
+        CAST(k.DateTimeEST AS DATE)                                     AS _date,
+        DATEPART(HOUR, k.DateTimeEST)                                   AS _hour,
+        CASE WHEN DATEPART(WEEKDAY, k.DateTimeEST) IN (1, 7)
+             THEN 'Weekend' ELSE 'Weekday' END                          AS [type],
+        CASE WHEN DATEPART(HOUR, k.DateTimeEST) BETWEEN 7 AND 18
+             THEN 'BusinessHours' ELSE 'NonBusinessHours' END           AS businessHour,
+
+        -- CPU
+        COALESCE(ca.CpuAvg, 0)      AS CpuAvg,
+        COALESCE(cm.CpuMax, 0)      AS CpuMax,
+        COALESCE(cm.CpuMaxGt50, 0)  AS CpuMaxGt50,
+        COALESCE(cm.CpuMaxGt25, 0)  AS CpuMaxGt25,
+        COALESCE(cm.CpuMaxGt10, 0)  AS CpuMaxGt10,
+
+        -- Memory Resident (MB)
+        COALESCE(mr.MemResidentMax, 0)  AS MemResidentMax,
+        COALESCE(mr.MemResidentAvg, 0)  AS MemResidentAvg,
+
+        -- Memory Available (KB)
+        COALESCE(ma.MemAvailableMin, 0) AS MemAvailableMin,
+
+        -- Connections
+        COALESCE(cn.ConnectionsMax, 0)  AS ConnectionsMax,
+        COALESCE(cn.ConnectionsAvg, 0)  AS ConnectionsAvg,
+
+        -- Opcounters (ops/sec)
+        COALESCE(oq.OpcQueryMax, 0)     AS OpcQueryMax,
+        COALESCE(oi.OpcInsertMax, 0)    AS OpcInsertMax
+
+    INTO #FinalMetrics
+    FROM #Keys k
+    -- Process table: metrics [key] = ProcessId
+    JOIN [MongoDB].[Process] p
+        ON  p.ProcessId  = k.[key]
+        AND p.IsDeleted  = 0
+    -- Clusters table: get SKU info from JSON
+    JOIN [MongoDB].[Clusters] cl
+        ON  cl.ClustersKey = p.ClusterKey
+    -- Metric temp tables (all LEFT JOIN — metric may not exist for every hour)
+    LEFT JOIN #CpuAvg      ca  ON ca.[key]  = k.[key] AND ca.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #CpuMax      cm  ON cm.[key]  = k.[key] AND cm.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #MemResident mr  ON mr.[key]  = k.[key] AND mr.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #MemAvail    ma  ON ma.[key]  = k.[key] AND ma.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #Conns       cn  ON cn.[key]  = k.[key] AND cn.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #OpcQuery    oq  ON oq.[key]  = k.[key] AND oq.DateTimeEST  = k.DateTimeEST
+    LEFT JOIN #OpcInsert   oi  ON oi.[key]  = k.[key] AND oi.DateTimeEST  = k.DateTimeEST;
+
+    --------------------------------------------------------------------------
+    -- 10. UPSERT into [Metrics].[MongoDBRightsizingAggregatedHourly]
+    --     Match key: ProcessId + DateTimeEST + _date + _hour + type + businessHour
+    --     Same pattern as PostgreSQL proc
+    --------------------------------------------------------------------------
+
+    -- UPDATE existing rows
+    UPDATE T
+    SET
+        T.ClusterKey        = S.ClusterKey,
+        T.ClusterName       = S.ClusterName,
+        T.ProcessType       = S.ProcessType,
+        T.ReplicaSetName    = S.ReplicaSetName,
+        T.ProjectKey        = S.ProjectKey,
+        T.OrgKey            = S.OrgKey,
+        T.InstanceSize      = S.InstanceSize,
+        T.ProviderName      = S.ProviderName,
+        T.RegionName        = S.RegionName,
+        T.CpuAvg            = S.CpuAvg,
+        T.CpuMax            = S.CpuMax,
+        T.CpuMaxGt50        = S.CpuMaxGt50,
+        T.CpuMaxGt25        = S.CpuMaxGt25,
+        T.CpuMaxGt10        = S.CpuMaxGt10,
+        T.MemResidentMax    = S.MemResidentMax,
+        T.MemResidentAvg    = S.MemResidentAvg,
+        T.MemAvailableMin   = S.MemAvailableMin,
+        T.ConnectionsMax    = S.ConnectionsMax,
+        T.ConnectionsAvg    = S.ConnectionsAvg,
+        T.OpcQueryMax       = S.OpcQueryMax,
+        T.OpcInsertMax      = S.OpcInsertMax
+    FROM [Metrics].[MongoDBRightsizingAggregatedHourly] T
+    JOIN #FinalMetrics S
+        ON  T.ProcessId     = S.ProcessId
+        AND T.DateTimeEST   = S.DateTimeEST
+        AND T._date         = S._date
+        AND T._hour         = S._hour
+        AND T.[type]        = S.[type]
+        AND T.businessHour  = S.businessHour;
+
+    -- INSERT new rows
+    INSERT INTO [Metrics].[MongoDBRightsizingAggregatedHourly]
+    (
+        ClusterKey, ClusterName, ProcessId, ProcessType, ReplicaSetName,
+        ProjectKey, OrgKey,
+        InstanceSize, ProviderName, RegionName,
+        DateTimeEST, _date, _hour, [type], businessHour,
+        CpuAvg, CpuMax, CpuMaxGt50, CpuMaxGt25, CpuMaxGt10,
+        MemResidentMax, MemResidentAvg, MemAvailableMin,
+        ConnectionsMax, ConnectionsAvg,
+        OpcQueryMax, OpcInsertMax
+    )
+    SELECT
+        S.ClusterKey, S.ClusterName, S.ProcessId, S.ProcessType, S.ReplicaSetName,
+        S.ProjectKey, S.OrgKey,
+        S.InstanceSize, S.ProviderName, S.RegionName,
+        S.DateTimeEST, S._date, S._hour, S.[type], S.businessHour,
+        S.CpuAvg, S.CpuMax, S.CpuMaxGt50, S.CpuMaxGt25, S.CpuMaxGt10,
+        S.MemResidentMax, S.MemResidentAvg, S.MemAvailableMin,
+        S.ConnectionsMax, S.ConnectionsAvg,
+        S.OpcQueryMax, S.OpcInsertMax
+    FROM #FinalMetrics S
+    WHERE NOT EXISTS
+    (
+        SELECT 1
+        FROM [Metrics].[MongoDBRightsizingAggregatedHourly] T
+        WHERE T.ProcessId    = S.ProcessId
+          AND T.DateTimeEST  = S.DateTimeEST
+          AND T._date        = S._date
+          AND T._hour        = S._hour
+          AND T.[type]       = S.[type]
+          AND T.businessHour = S.businessHour
+    );
+
+END
+GO
