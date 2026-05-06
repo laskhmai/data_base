@@ -311,3 +311,17 @@ not_in_list = missing_df[
 
 print("\nSubscriptions NOT in list:")
 print(not_in_list)
+
+
+-- Run on Lenticular
+-- Check if ResourceGroupName 
+-- is NULL in raw Azure data
+SELECT TOP 10
+    r.SubscriptionKey,
+    r.ResourceGroupName,
+    s.SubscriptionName
+FROM [AZURE].[Resources] r
+LEFT JOIN [AZURE].[vw_AccountRG] s
+    ON s.SubscriptionKey = r.SubscriptionKey
+    AND r.ResourceGroupName = s.ResourceGroupName
+WHERE s.SubscriptionName IS NULL
