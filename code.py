@@ -128,3 +128,24 @@ SELECT
     ROUND(AVG(MemResidentMax), 2)          AS AvgMemResidentMB,
     ROUND(AVG(ConnectionsMax), 2)          AS AvgPeakConnections
 FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+
+
+
+SELECT DISTINCT
+    cl.Name,
+    cl.ReplicationSpecs
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly] h
+JOIN [MongoDB].[Clusters] cl
+    ON cl.ClustersKey = h.ClusterKey
+WHERE h.InstanceSize IS NULL
+
+
+
+-- Check if table has data
+SELECT 
+    MIN(DateTime) AS OldestRecord,
+    MAX(DateTime) AS LatestRecord,
+    COUNT(*)      AS TotalRows
+FROM [Metrics].[MongoDB_System_Network_Out_Max_15M]
+WHERE DateTime >= '2026-05-01'
+AND   DateTime <  '2026-05-04'
