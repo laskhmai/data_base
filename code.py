@@ -1,35 +1,41 @@
-def process_subscription(account_name: str, 
-                         virtual_tags_df: pd.DataFrame, 
-                         snow_df: pd.DataFrame):
-    print(f"\n=== Processing subscription: {account_name} ===")
-    
-    # 1) load sources for this subscription
-    resources_df = load_sources(account_name)
-    
-    if resources_df.empty:
-        print("No resources for this subscription Skipping")
-        return
-    
-    # ✅ FIX 1: Filter virtual_tags to only this subscription's resources
-    # This prevents 810K row merge causing OOM
-    sub_resource_ids = set(
-        resources_df["ResourceId"].astype(str).str.lower()
-    )
-    vt_filtered = virtual_tags_df[
-        virtual_tags_df["resource_id_key"].isin(sub_resource_ids)
-    ].copy()
-    print(f"Filtered virtual_tags: {len(vt_filtered)} rows "
-          f"(from {len(virtual_tags_df)} total)")
-    
-    # 2) load previous hashes and filter delta
-    prev_hash_df = load_previous_hashes(account_name)
-    delta_df = filter_changed_resources(resources_df, prev_hash_df)
-    
-    # 3) Transform only the delta
-    print(f"Transforming {len(delta_df)} resources...")
-    if delta_df is None or delta_df.empty:
-        print("Delta returned no rows Skipping transformation")
-        return
-    
-    # ✅ Pass filtered vt_filtered instead of full virtual_tags_df
-    gold_df = transform(delta_df, vt_filtered, snow_df)
+def read_sql_df(con, sql: str,
+                params: Optional[Iterable[Any]] = None) -> pd.DataFrame:
+    cursor = con.cursor()
+    try:
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+        rows = cursor.fetchall()
+        columns = [col[0] for col in cursor.description] \
+                  if cursor.description else []
+        return pd.DataFrame.from_records(rows, columns=columns)
+    finally:
+        cursor.close()
+
+# ✅ FIX 2: New retry wrapper — add this right after read_sql_df
+def read_sql_df_with_retry(con_factory, sql: str,
+                            params=None,
+                            retries: int = 3,
+                            delay: int = 10) -> pd.DataFrame:
+    """
+    Retries SQL execution up to `retries` times on 
+    connection failure. delay increases each attempt.
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            with con_factory() as con:
+                return read_sql_df(con, sql, params)
+        except pyodbc.OperationalError as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = delay * (attempt + 1)
+                print(f"Connection failed attempt "
+                      f"{attempt+1}/{retries}. "
+                      f"Retrying in {wait}s... Error: {e}")
+                time.sleep(wait)
+            else:
+                print(f"All {retries} attempts failed.")
+                raise
+    raise last_error
