@@ -177,3 +177,42 @@ FROM [MongoDB].[Clusters]
 WHERE Name LIKE '%cwth%'
    OR Name LIKE '%scheduling%'
 )
+
+
+
+
+SELECT
+    cl.Name,
+    COALESCE(
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize'),
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].electableSpecs.instanceSize')
+    ) AS InstanceSize
+FROM [MongoDB].[Clusters] cl
+WHERE cl.Name LIKE '%cwih%'
+
+
+
+
+
+SELECT
+    MIN(DateTime) AS OldestRecord,
+    MAX(DateTime) AS LatestRecord,
+    COUNT(*)      AS TotalRows
+FROM [Metrics].[MongoDB_System_Network_Out_Max_15M]
+WHERE DateTime >= '2026-05-01'
+AND   DateTime <  '2026-05-04'
+
+
+
+
+SELECT
+    ClustersKey,
+    Name,
+    ClusterId,
+    CreateDate,
+    StateName
+FROM [MongoDB].[Clusters]
+WHERE Name LIKE '%cwih%'
+ORDER BY Name, CreateDate
