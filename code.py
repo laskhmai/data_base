@@ -1,41 +1,45 @@
-def read_sql_df(con, sql: str,
-                params: Optional[Iterable[Any]] = None) -> pd.DataFrame:
-    cursor = con.cursor()
-    try:
-        if params:
-            cursor.execute(sql, params)
-        else:
-            cursor.execute(sql)
-        rows = cursor.fetchall()
-        columns = [col[0] for col in cursor.description] \
-                  if cursor.description else []
-        return pd.DataFrame.from_records(rows, columns=columns)
-    finally:
-        cursor.close()
-
-# ✅ FIX 2: New retry wrapper — add this right after read_sql_df
-def read_sql_df_with_retry(con_factory, sql: str,
-                            params=None,
-                            retries: int = 3,
-                            delay: int = 10) -> pd.DataFrame:
+def load_child_tables() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    
+    # ✅ FIX: Use retry for both connections
+    lenticular_factory = make_connection_factory(
+        lenticular_server, lenticular_database,
+        lenticular_username, lenticular_password, ODBC_DRIVER
+    )
+    hybrideasi_factory = make_connection_factory(
+        hybrideasi_server, hybrideasi_database,
+        hybrideasi_username, hybrideasi_password, ODBC_DRIVER
+    )
+    
+    vt_sql = """
+        SELECT
+            [resource_id], [resource_name],
+            [resource_group_name], [subscription_id],
+            [resource_type], [cloud_provider],
+            [subscription_name], [environment],
+            [change_category], [res_tags], [data_hash],
+            [inferred_app_name], [app_name_source],
+            [confidence_score], [app_owner],
+            [ml_app_name], [ml_app_owner], [app_pattern],
+            [app_id], [app_id_source_tag], [app_service_id],
+            [rg_inferred_app_name], [processing_date]
+        FROM [Gold].[VTag_Azure_InferredTags]
     """
-    Retries SQL execution up to `retries` times on 
-    connection failure. delay increases each attempt.
+    
+    snow_sql = """
+        SELECT
+            COALESCE([AppServiceID], [APPID]) AS [AppServiceID],
+            [AppID], [AppName], [EapmId],
+            [AppOwnerEmail], [AppOwner],
+            [BusinessUnit], [Department]
+        FROM [Silver].[SnowNormalized]
     """
-    last_error = None
-    for attempt in range(retries):
-        try:
-            with con_factory() as con:
-                return read_sql_df(con, sql, params)
-        except pyodbc.OperationalError as e:
-            last_error = e
-            if attempt < retries - 1:
-                wait = delay * (attempt + 1)
-                print(f"Connection failed attempt "
-                      f"{attempt+1}/{retries}. "
-                      f"Retrying in {wait}s... Error: {e}")
-                time.sleep(wait)
-            else:
-                print(f"All {retries} attempts failed.")
-                raise
-    raise last_error
+    
+    # ✅ Retry on connection failure
+    virtual_tags_df = read_sql_df_with_retry(
+        lenticular_factory, vt_sql, retries=3, delay=10
+    )
+    snow_df = read_sql_df_with_retry(
+        hybrideasi_factory, snow_sql, retries=3, delay=10
+    )
+    
+    return virtual_tags_df, snow_df
