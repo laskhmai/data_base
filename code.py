@@ -216,3 +216,98 @@ SELECT
 FROM [MongoDB].[Clusters]
 WHERE Name LIKE '%cwih%'
 ORDER BY Name, CreateDate
+
+
+
+
+
+
+# Run this in your notebook
+
+# Step 1: Get Silver records NOT in Gold
+sql_silver = """
+    SELECT ResourceId, AccountName
+    FROM [Silver].[AzureResourcesNormalized]
+"""
+
+sql_gold = """
+    SELECT resource_id
+    FROM [Gold].[AzureActiveResourceOwnerShipNormalized]
+"""
+
+sql_subscriptions = """
+    SELECT DISTINCT [SubscriptionName]
+    FROM [AZURE].[Subscriptions]
+"""
+
+# Fetch from Lenticular (Silver)
+with connect(lenticular_server, lenticular_database,
+             lenticular_username, 
+             lenticular_password) as con_l:
+    silver_df = read_sql_df(con_l, sql_silver)
+    subs_df = read_sql_df(con_l, sql_subscriptions)
+
+# Fetch from Hybrideasi (Gold)
+with connect(hybrideasi_server, hybrideasi_database,
+             hybrideasi_username,
+             hybrideasi_password) as con_h:
+    gold_df = read_sql_df(con_h, sql_gold)
+
+# Step 2: Normalize IDs
+silver_df["resource_id_norm"] = (
+    silver_df["ResourceId"]
+    .astype(str).str.lower().str.strip()
+)
+gold_df["resource_id_norm"] = (
+    gold_df["resource_id"]
+    .astype(str).str.lower().str.strip()
+)
+subs_df["sub_norm"] = (
+    subs_df["SubscriptionName"]
+    .astype(str).str.lower().str.strip()
+)
+silver_df["account_norm"] = (
+    silver_df["AccountName"]
+    .astype(str).str.lower().str.strip()
+)
+
+# Step 3: Find 1314 missing records
+gold_ids = set(gold_df["resource_id_norm"])
+missing_df = silver_df[
+    ~silver_df["resource_id_norm"]
+    .isin(gold_ids)
+].copy()
+
+print(f"Total missing records: {len(missing_df)}")
+
+# Step 4: Which subscriptions?
+print("\nMissing by subscription:")
+print(
+    missing_df.groupby("AccountName")
+    .size()
+    .reset_index(name="count")
+    .sort_values("count", ascending=False)
+    .to_string()
+)
+
+# Step 5: Are these subscriptions
+# in get_subscriptions() list?
+sub_list = set(subs_df["sub_norm"])
+missing_df["in_subscription_list"] = (
+    missing_df["account_norm"]
+    .isin(sub_list)
+)
+
+print("\nIn subscription list?")
+print(
+    missing_df["in_subscription_list"]
+    .value_counts()
+)
+
+# Step 6: Show subscriptions NOT in list
+not_in_list = missing_df[
+    ~missing_df["in_subscription_list"]
+]["AccountName"].unique()
+
+print("\nSubscriptions NOT in list:")
+print(not_in_list)
