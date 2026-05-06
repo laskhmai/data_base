@@ -149,3 +149,24 @@ SELECT
 FROM [Metrics].[MongoDB_System_Network_Out_Max_15M]
 WHERE DateTime >= '2026-05-01'
 AND   DateTime <  '2026-05-04'
+
+
+SELECT
+    cl.Name,
+    COALESCE(
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize'),
+        JSON_VALUE(cl.ReplicationSpecs,
+            '$[0].regionConfigs[0].electableSpecs.instanceSize')
+    ) AS InstanceSize,
+    JSON_VALUE(cl.ReplicationSpecs,
+        '$[0].regionConfigs[0].providerName') AS ProviderName,
+    JSON_VALUE(cl.ReplicationSpecs,
+        '$[0].regionConfigs[0].regionName')   AS RegionName
+FROM [MongoDB].[Clusters] cl
+WHERE cl.Name IN (
+    'cwth-ptscheduling-uat',
+    'liquibase-mongodb-dev1',
+    'cwth-ptscheduling-prod',
+    'cwth-ptscheduling-qa'
+)
