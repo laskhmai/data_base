@@ -169,4 +169,11 @@ WHERE cl.Name IN (
     'liquibase-mongodb-dev1',
     'cwth-ptscheduling-prod',
     'cwth-ptscheduling-qa'
+
+
+    -- Find exact names for cwth clusters
+SELECT ClustersKey, Name
+FROM [MongoDB].[Clusters]
+WHERE Name LIKE '%cwth%'
+   OR Name LIKE '%scheduling%'
 )
