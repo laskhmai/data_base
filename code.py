@@ -1,29 +1,45 @@
-Hey Charles! Found the issue!
+Hey Charles! Here is the full list of 
+orgs you need to connect to:
 
-dpk-test-cluster does NOT belong 
-to cloudea org.
+1.  mongo-caad
+2.  mongo-centerwell-patient-mastering
+3.  mongo-cgx
+4.  mongo-cloudea
+5.  mongo-cloudmlp
+6.  mongo-consumerhub
+7.  mongo-core-cognitive-api---data
+8.  mongo-corporate-it
+9.  mongo-database-services
+10. mongo-dige
+11. mongo-enrollmentsystems
+12. mongo-enterprise-information-protection
+13. mongo-enterprise-platforms---analytics
+14. mongo-fhir
+15. mongo-healthcare-interoperability
+16. mongo-homegrid
+17. mongo-medc-claims-adjudication
+18. mongo-pharmacy-benefits-management
+19. mongo-pharmacy-fulfillment
+20. mongo-provider
+21. mongo-retail-medicare-provider
+22. mongo-shared001
+23. mongo-softwaredevelopmenttools
+24. mongo-voice-technology---process-innovation
+25. mongo-wellness---rewards
 
-It belongs to:
-  Org     : Database Services
-  OrgId   : 5dfd2fa5014b763d499389cd
-  Project : Dileep-Test1
+These are all in kv-hybridautomation 
+Key Vault as:
+  {org-name}-public-key
+  {org-name}-private-key
 
-That's why your code with 
-TARGET_ENV = "cloudea" is not 
-returning it — you are only 
-authenticating against cloudea 
-which has 2 clusters.
+Your parking code needs to loop 
+through ALL 25 orgs to get all 
+clusters — not just one TARGET_ENV.
 
-To get dpk-test-cluster you need 
-to authenticate against 
-"Database Services" org using:
-  mongo-database-services-public-key
-  mongo-database-services-private-key
-
-from kv-hybridautomation Key Vault.
-
-If your parking code needs to cover 
-ALL orgs, you need to loop through 
-all orgs in our KEY_LIST like our 
-processor does — not just one 
-TARGET_ENV.
+Same pattern as our processor code:
+for key_name in KEY_LIST:
+    public_key  = keyvault.fetch_secret(
+                    key_name + "-public-key")
+    private_key = keyvault.fetch_secret(
+                    key_name + "-private-key")
+    # then fetch clusters for that org
