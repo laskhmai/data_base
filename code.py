@@ -1,19 +1,26 @@
 SELECT 
-    s.service_name,
-    COUNT(*) as missing_records,
-    SUM(s.amortized_spend) as missing_spend
+    CONVERT(DATE, s.[date]) as date,
+    SUM(s.amortized_spend) as raw_spend,
+    SUM(CAST(ISNULL(s.amortized_spend, 0.0) 
+        AS DECIMAL(18,8))) as current_proc_spend,
+    SUM(s.amortized_spend) - 
+    SUM(CAST(ISNULL(s.amortized_spend, 0.0) 
+        AS DECIMAL(18,8))) as difference
 FROM [Cloudability].[Daily_Spend] s
-WHERE s.vendor = 'azure'
+WHERE s.vendor = 'Azure'
 AND s.[date] BETWEEN '2026-05-01' AND '2026-05-10'
-AND NOT EXISTS (
-    SELECT 1 
-    FROM [Silver].[Cloudability_Daily_Resource_Cost] t
-    WHERE t.billing_date = CONVERT(DATE, s.[date])
-    AND t.resource_id = STUFF(s.resource_id, 1,
-        CASE WHEN CHARINDEX('/', s.resource_id) > 0 
-        THEN CHARINDEX('/', s.resource_id) - 1 
-        ELSE 0 END, '')
-    AND t.vendor = 'Azure'
-)
-GROUP BY s.service_name
-ORDER BY missing_spend DESC
+GROUP BY CONVERT(DATE, s.[date])
+ORDER BY date
+
+
+SELECT 
+    CONVERT(DATE, s.[date]) as date,
+    SUM(s.amortized_spend) as raw_spend,
+    SUM(ISNULL(s.amortized_spend, 0.0)) as fixed_spend,
+    SUM(s.amortized_spend) - 
+    SUM(ISNULL(s.amortized_spend, 0.0)) as difference
+FROM [Cloudability].[Daily_Spend] s
+WHERE s.vendor = 'Azure'
+AND s.[date] BETWEEN '2026-05-01' AND '2026-05-10'
+GROUP BY CONVERT(DATE, s.[date])
+ORDER BY date
