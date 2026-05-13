@@ -1,25 +1,18 @@
--- Compare Synapse data at resource level
+-- Check missing Synapse records for last 3 months
 SELECT 
-    'RAW' as source,
     CONVERT(DATE, s.[date]) as date,
-    s.resource_id,
-    SUM(s.amortized_spend) as spend
+    COUNT(*) as missing_records,
+    SUM(s.amortized_spend) as missing_spend
 FROM [Cloudability].[Daily_Spend] s
 WHERE s.vendor = 'azure'
-AND s.[date] BETWEEN '2026-05-01' AND '2026-05-10'
+AND s.[date] BETWEEN '2026-02-01' AND '2026-05-10'
 AND s.service_name = 'Microsoft.Synapse'
-GROUP BY CONVERT(DATE, s.[date]), s.resource_id
-
-EXCEPT
-
-SELECT 
-    'SILVER' as source,
-    billing_date,
-    resource_id,
-    SUM(overall_amortized_spend)
-FROM [Silver].[Cloudability_Daily_Resource_Cost]
-WHERE vendor = 'Azure'
-AND CAST(billing_date AS DATE) 
-    BETWEEN '2026-05-01' AND '2026-05-10'
-AND service_name = 'Microsoft.Synapse'
-GROUP BY billing_date, resource_id
+AND NOT EXISTS (
+    SELECT 1 
+    FROM [Silver].[Cloudability_Daily_Resource_Cost] t
+    WHERE t.billing_date = CONVERT(DATE, s.[date])
+    AND t.resource_id = s.resource_id
+    AND t.vendor = 'Azure'
+)
+GROUP BY CONVERT(DATE, s.[date])
+ORDER BY date
