@@ -1,40 +1,12 @@
-SELECT billing_date,
-       SUM(overall_amortized_spend) as silver_spend
+-- Check what service names exist in Silver 
+-- that contain Databricks or Synapse
+SELECT DISTINCT service_name, 
+       SUM(overall_amortized_spend) as spend
 FROM [Silver].[Cloudability_Daily_Resource_Cost]
 WHERE vendor = 'Azure'
-AND CAST(billing_date AS DATE) BETWEEN '2026-05-01' AND '2026-05-10'
-AND service_name NOT IN ('Microsoft.Databricks','Microsoft.Synapse')
-GROUP BY billing_date
-ORDER BY billing_date
-
-
-
-SELECT CONVERT(DATE, s.[date]) as date,
-       SUM(s.amortized_spend) as raw_spend
-FROM [Cloudability].[Daily_Spend] s
-WHERE s.vendor = 'azure'
-AND s.[date] BETWEEN '2026-05-01' AND '2026-05-10'
-AND s.service_name NOT IN ('Microsoft.Databricks','Microsoft.Synapse')
-GROUP BY CONVERT(DATE, s.[date])
-ORDER BY 1
-
-
-
-SELECT a.date, a.raw_spend, b.silver_spend,
-       b.silver_spend - a.raw_spend AS difference
-FROM (SELECT CONVERT(DATE, s.[date]) as date,
-             SUM(s.amortized_spend) as raw_spend
-      FROM [Cloudability].[Daily_Spend] s
-      WHERE s.vendor = 'azure'
-      AND s.[date] BETWEEN '2026-05-01' AND '2026-05-10'
-      AND s.service_name NOT IN ('Microsoft.Databricks','Microsoft.Synapse')
-      GROUP BY CONVERT(DATE, s.[date])) a
-JOIN (SELECT billing_date,
-             SUM(overall_amortized_spend) as silver_spend
-      FROM [Silver].[Cloudability_Daily_Resource_Cost]
-      WHERE vendor = 'Azure'
-      AND CAST(billing_date AS DATE) BETWEEN '2026-05-01' AND '2026-05-10'
-      AND service_name NOT IN ('Microsoft.Databricks','Microsoft.Synapse')
-      GROUP BY billing_date) b
-ON a.date = b.billing_date
-ORDER BY a.date
+AND CAST(billing_date AS DATE) 
+    BETWEEN '2026-05-01' AND '2026-05-10'
+AND service_name LIKE '%Databricks%' 
+ OR service_name LIKE '%Synapse%'
+GROUP BY service_name
+ORDER BY spend DESC
