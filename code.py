@@ -1,15 +1,12 @@
+-- Test COALESCE directly on the exact ClusterKeys used
 SELECT 
     ClustersKey,
     Name,
-    StateName,
-    JSON_VALUE(ReplicationSpecs, 
-        '$[0].regionConfigs[0].electableSpecs.instanceSize') AS ElectablePath,
-    JSON_VALUE(ReplicationSpecs, 
-        '$[0].regionConfigs[1].electableSpecs.instanceSize') AS ElectablePath_Region1
+    COALESCE(
+        JSON_VALUE(ReplicationSpecs, 
+            '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize'),
+        JSON_VALUE(ReplicationSpecs, 
+            '$[0].regionConfigs[0].electableSpecs.instanceSize')
+    ) AS WhatProcGets
 FROM [MongoDB].[Clusters]
-WHERE Name LIKE 'cwih-ptscheduling%'
-ORDER BY Name, ClustersKey
-
-SELECT DISTINCT ClusterKey, ClusterName
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ClusterName LIKE 'cwih-ptscheduling%'
+WHERE ClustersKey IN (251, 250, 248, 252)
