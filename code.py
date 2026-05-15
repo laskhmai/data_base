@@ -1,21 +1,19 @@
--- Step 1: Get its ClusterKey
-SELECT DISTINCT ClusterKey, ClusterName
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ClusterName = 'liquibase-mongodb-dev1'
-
--- Step 2: Test what InstanceSize it got
-SELECT DISTINCT ClusterName, InstanceSize
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ClusterName = 'liquibase-mongodb-dev1'
-
--- Step 3: Test COALESCE directly on its Clusters row
+-- Full list of M0/free tier clusters
 SELECT 
-    ClustersKey,
-    Name,
-    JSON_VALUE(ReplicationSpecs,
-        '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize') AS Path1,
-    JSON_VALUE(ReplicationSpecs,
-        '$[0].regionConfigs[0].electableSpecs.instanceSize')          AS Path2,
-    LEFT(ReplicationSpecs, 300) AS JsonPreview
-FROM [MongoDB].[Clusters]
-WHERE Name = 'liquibase-mongodb-dev1'
+    DISTINCT 
+    ClusterName,
+    InstanceSize,
+    COUNT(*) OVER (PARTITION BY ClusterName) AS RowCount
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+WHERE InstanceSize IN ('M0', 'M2', 'M5')
+ORDER BY InstanceSize, ClusterName
+
+-- Summary count
+SELECT 
+    InstanceSize,
+    COUNT(DISTINCT ClusterName) AS ClusterCount,
+    COUNT(DISTINCT ClusterKey)  AS UniqueClusterKeys,
+    COUNT(*)                    AS TotalRows
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+WHERE InstanceSize IN ('M0', 'M2', 'M5')
+GROUP BY InstanceSize
