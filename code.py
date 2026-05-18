@@ -1,19 +1,22 @@
--- Full list of M0/free tier clusters
+-- How many orgs, projects, clusters, processes
 SELECT 
-    DISTINCT 
-    ClusterName,
-    InstanceSize,
-    COUNT(*) OVER (PARTITION BY ClusterName) AS RowCount
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE InstanceSize IN ('M0', 'M2', 'M5')
-ORDER BY InstanceSize, ClusterName
+    COUNT(DISTINCT o.OrgId)    AS TotalOrgs,
+    COUNT(DISTINCT p.ProjectKey) AS TotalProjects,
+    COUNT(DISTINCT p.ClusterKey) AS TotalClusters,
+    COUNT(DISTINCT p.ProcessKey) AS TotalProcesses
+FROM [MongoDB].[Process] p
+JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
+WHERE p.IsDeleted = 0
 
--- Summary count
+-- Breakdown by Org
 SELECT 
-    InstanceSize,
-    COUNT(DISTINCT ClusterName) AS ClusterCount,
-    COUNT(DISTINCT ClusterKey)  AS UniqueClusterKeys,
-    COUNT(*)                    AS TotalRows
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE InstanceSize IN ('M0', 'M2', 'M5')
-GROUP BY InstanceSize
+    o.Name                          AS OrgName,
+    o.OrgId,
+    COUNT(DISTINCT p.ProjectKey)    AS Projects,
+    COUNT(DISTINCT p.ClusterKey)    AS Clusters,
+    COUNT(DISTINCT p.ProcessKey)    AS Processes
+FROM [MongoDB].[Process] p
+JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
+WHERE p.IsDeleted = 0
+GROUP BY o.Name, o.OrgId
+ORDER BY Processes DESC
