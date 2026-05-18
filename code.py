@@ -1,22 +1,24 @@
--- How many orgs, projects, clusters, processes
-SELECT 
-    COUNT(DISTINCT o.OrgId)    AS TotalOrgs,
-    COUNT(DISTINCT p.ProjectKey) AS TotalProjects,
-    COUNT(DISTINCT p.ClusterKey) AS TotalClusters,
-    COUNT(DISTINCT p.ProcessKey) AS TotalProcesses
-FROM [MongoDB].[Process] p
-JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
-WHERE p.IsDeleted = 0
-
--- Breakdown by Org
+-- Today's records by Organization
 SELECT 
     o.Name                          AS OrgName,
-    o.OrgId,
-    COUNT(DISTINCT p.ProjectKey)    AS Projects,
     COUNT(DISTINCT p.ClusterKey)    AS Clusters,
-    COUNT(DISTINCT p.ProcessKey)    AS Processes
-FROM [MongoDB].[Process] p
+    COUNT(DISTINCT h.ProcessId)     AS Processes,
+    COUNT(*)                        AS TotalRows,
+    MIN(h.DateTimeEST)              AS EarliestHour,
+    MAX(h.DateTimeEST)              AS LatestHour
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly] h
+JOIN [MongoDB].[Process] p  ON p.ProcessId = h.ProcessId
 JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
-WHERE p.IsDeleted = 0
-GROUP BY o.Name, o.OrgId
-ORDER BY Processes DESC
+WHERE h._date = CAST(GETDATE() AS DATE)
+GROUP BY o.Name
+ORDER BY TotalRows DESC
+
+-- Summary line
+SELECT 
+    COUNT(DISTINCT o.Name)          AS TotalOrgs,
+    COUNT(DISTINCT h.ProcessId)     AS TotalProcesses,
+    COUNT(*)                        AS TotalRowsToday
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly] h
+JOIN [MongoDB].[Process] p  ON p.ProcessId = h.ProcessId
+JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
+WHERE h._date = CAST(GETDATE() AS DATE)
