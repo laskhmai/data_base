@@ -1,16 +1,19 @@
-# Check if az3-udap-prd records
-# exist anywhere in Gold Active
+def main():
+    subscriptions = get_subscriptions()
+    print(f"Found {len(subscriptions)} subscriptions")
+    
+    virtual_tags_df, snow_df = load_child_tables()
+    print("Completed loading records")
+    
+    # ✅ TEST ONE SUBSCRIPTION ONLY
+    # Change this to any subscription
+    # you want to test
+    test_subscription = "az3-udap-prd"
+    
+    process_subscription(
+        test_subscription,
+        virtual_tags_df,
+        snow_df
+    )
 
-sql_gold_active = """
-    SELECT COUNT(*) as count
-    FROM [Gold].[AzureActiveResourceOwnerShipNormalized]
-    WHERE cloud_account_name = 'az3-udap-prd'
-"""
-
-with connect(hybrideasi_server,
-             hybrideasi_database,
-             hybrideasi_username,
-             hybrideasi_password) as con_h:
-    result = read_sql_df(con_h, sql_gold_active)
-
-print(f"az3-udap-prd in Gold Active: {result}")
+main()
