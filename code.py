@@ -1,24 +1,16 @@
--- How many orgs fetched in yesterday's processor run
-SELECT 
-    o.Name                          AS OrgName,
-    COUNT(DISTINCT p.ProjectKey)    AS Projects,
-    COUNT(DISTINCT p.ClusterKey)    AS Clusters,
-    COUNT(*)                        AS Processes,
-    MAX(p.AuditUtc)                 AS LastUpdated
-FROM [MongoDB].[Process] p
-JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
-WHERE CAST(p.AuditUtc AS DATE) = CAST(DATEADD(DAY,-1,GETDATE()) AS DATE)
-AND p.IsDeleted = 0
-GROUP BY o.Name
-ORDER BY Processes DESC
+# Check if az3-udap-prd records
+# exist anywhere in Gold Active
 
--- Summary
-SELECT 
-    COUNT(DISTINCT o.OrgId)         AS TotalOrgs,
-    COUNT(DISTINCT p.ProjectKey)    AS TotalProjects,
-    COUNT(DISTINCT p.ClusterKey)    AS TotalClusters,
-    COUNT(*)                        AS TotalProcesses
-FROM [MongoDB].[Process] p
-JOIN [MongoDB].[Organization] o ON o.OrgKey = p.OrgKey
-WHERE CAST(p.AuditUtc AS DATE) = CAST(DATEADD(DAY,-1,GETDATE()) AS DATE)
-AND p.IsDeleted = 0
+sql_gold_active = """
+    SELECT COUNT(*) as count
+    FROM [Gold].[AzureActiveResourceOwnerShipNormalized]
+    WHERE cloud_account_name = 'az3-udap-prd'
+"""
+
+with connect(hybrideasi_server,
+             hybrideasi_database,
+             hybrideasi_username,
+             hybrideasi_password) as con_h:
+    result = read_sql_df(con_h, sql_gold_active)
+
+print(f"az3-udap-prd in Gold Active: {result}")
