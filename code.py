@@ -1,22 +1,19 @@
--- Quick join test before building notebook
-SELECT 
-    h.ClusterName,
-    h.InstanceSize,
-    h.ProviderName,
-    h.RegionName,
-    m.Tier,
-    m.vCores,
-    m.MemorySizeGB,
-    m.CostPrHour
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly] h
-JOIN [Analytics].[MongoDBMetaConfig] m
-    ON  m.SkuName  = h.InstanceSize
-    AND m.Provider = h.ProviderName
-    AND m.Region   = h.RegionName
-WHERE h.InstanceSize IS NOT NULL
-GROUP BY 
-    h.ClusterName, h.InstanceSize,
-    h.ProviderName, h.RegionName,
-    m.Tier, m.vCores, 
-    m.MemorySizeGB, m.CostPrHour
-ORDER BY h.ClusterName
+-- Check aggregation table columns
+SELECT COLUMN_NAME, DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'Metrics'
+AND TABLE_NAME = 'MongoDBRightsizingAggregatedHourly'
+ORDER BY ORDINAL_POSITION
+
+-- Check Process table audit columns
+SELECT COLUMN_NAME, DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'MongoDB'
+AND TABLE_NAME = 'Process'
+ORDER BY ORDINAL_POSITION
+
+-- Check ASP recommendations table if exists
+SELECT COLUMN_NAME, DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME LIKE '%Recommendation%'
+ORDER BY TABLE_NAME, ORDINAL_POSITION
