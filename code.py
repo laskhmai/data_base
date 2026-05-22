@@ -1,202 +1,299 @@
--- STEP 1: Pick one hour from each process
-DECLARE @Process1 NVARCHAR(255) = 
-    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
-DECLARE @Process2 NVARCHAR(255) = 
+-- ALL 12 SOURCE TABLES + AGGREGATION IN ONE QUERY
+-- Save this as one CSV
+
+-- AGGREGATION TABLE
+SELECT
+    'AGGREGATION'                   AS Source,
+    ProcessId                       AS [Key],
+    DateTimeEST                     AS DateTime,
+    CpuAvg                          AS CpuAvg,
+    CpuMax                          AS CpuMax,
+    MemResidentMax                  AS MemResidentMax,
+    MemAvailableMin                 AS MemAvailableMin,
+    NetInAvg                        AS NetInAvg,
+    NetInMax                        AS NetInMax,
+    NetOutAvg                       AS NetOutAvg,
+    NetOutMax                       AS NetOutMax,
+    NetRequestsMax                  AS NetRequestsMax,
+    ConnectionsMax                  AS ConnectionsMax,
+    OpcQueryMax                     AS OpcQueryMax,
+    OpcInsertMax                    AS OpcInsertMax
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+WHERE ProcessId IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
     'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTimeEST = (
+    SELECT MAX(DateTimeEST)
+    FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+)
 
--- Get latest hour for each process
-DECLARE @Hour1EST DATETIME
-DECLARE @Hour2EST DATETIME
-
-SELECT @Hour1EST = MAX(DateTimeEST)
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ProcessId = @Process1
-
-SELECT @Hour2EST = MAX(DateTimeEST)
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ProcessId = @Process2
-
--- Convert EST to UTC (add 5 hours)
-DECLARE @Hour1UTC_Start DATETIME = DATEADD(HOUR, 5, @Hour1EST)
-DECLARE @Hour1UTC_End   DATETIME = DATEADD(HOUR, 1, @Hour1UTC_Start)
-
-DECLARE @Hour2UTC_Start DATETIME = DATEADD(HOUR, 5, @Hour2EST)
-DECLARE @Hour2UTC_End   DATETIME = DATEADD(HOUR, 1, @Hour2UTC_Start)
-
--- ─────────────────────────────────────────
--- STEP 2: Show aggregation table values
--- ─────────────────────────────────────────
-SELECT
-    'AGGREGATION TABLE'     AS Source,
-    ProcessId,
-    DateTimeEST,
-    InstanceSize,
-    CpuAvg,
-    CpuMax,
-    MemResidentMax,
-    MemResidentAvg,
-    MemAvailableMin,
-    NetInAvg,
-    NetInMax,
-    NetOutAvg,
-    NetOutMax,
-    NetRequestsMax,
-    ConnectionsMax,
-    ConnectionsAvg,
-    OpcQueryMax,
-    OpcInsertMax
-FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
-WHERE ProcessId IN (@Process1, @Process2)
-AND DateTimeEST IN (@Hour1EST, @Hour2EST)
-
--- ─────────────────────────────────────────
--- STEP 3: Show raw source table values
--- for Process 1
--- ─────────────────────────────────────────
 UNION ALL
+
+-- 1. CPU AVG
 SELECT
-    'RAW - CpuAvg'          AS Source,
-    @Process1               AS ProcessId,
-    @Hour1EST               AS DateTimeEST,
-    NULL                    AS InstanceSize,
-    AVG(Measurement)        AS CpuAvg,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '1-CpuAvg'      AS Source,
+    [Key], DateTime,
+    AVG(Measurement), NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST)
+    FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST)
+    FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 2. CPU MAX
 SELECT
-    'RAW - CpuMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,
-    MAX(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '2-CpuMax', [Key], DateTime,
+    NULL, MAX(Measurement), NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 3. MEMORY RESIDENT
 SELECT
-    'RAW - MemResidentMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,
-    MAX(Measurement),
-    AVG(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '3-MemResident', [Key], DateTime,
+    NULL, NULL, MAX(Measurement), NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_Memory_Resident_5M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 4. MEMORY AVAILABLE
 SELECT
-    'RAW - MemAvailableMin',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,
-    MIN(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '4-MemAvailable', [Key], DateTime,
+    NULL, NULL, NULL, MIN(Measurement),
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Memory_Available_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 5. NETWORK IN AVG
 SELECT
-    'RAW - NetInAvg',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,
-    AVG(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '5-NetInAvg', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    AVG(Measurement), NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Network_In_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 6. NETWORK IN MAX
 SELECT
-    'RAW - NetInMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL
+    '6-NetInMax', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, MAX(Measurement), NULL, NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Network_In_Max_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 7. NETWORK OUT AVG
 SELECT
-    'RAW - NetOutAvg',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    AVG(Measurement),
-    NULL,NULL,NULL,NULL,NULL,NULL
+    '7-NetOutAvg', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, AVG(Measurement), NULL, NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Network_Out_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 8. NETWORK OUT MAX
 SELECT
-    'RAW - NetOutMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement),
-    NULL,NULL,NULL,NULL,NULL
+    '8-NetOutMax', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, MAX(Measurement), NULL, NULL, NULL, NULL
 FROM [Metrics].[MongoDB_System_Network_Out_Max_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 9. NETWORK REQUESTS
 SELECT
-    'RAW - NetRequestsMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement),
-    NULL,NULL,NULL,NULL
+    '9-NetRequests', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, MAX(Measurement), NULL, NULL, NULL
 FROM [Metrics].[MongoDB_Network_Num_Requests_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 10. CONNECTIONS
 SELECT
-    'RAW - ConnectionsMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement),
-    AVG(Measurement),
-    NULL,NULL
+    '10-Connections', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, MAX(Measurement), NULL, NULL
 FROM [Metrics].[MongoDB_Connections_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
+
+-- 11. OPCOUNTER QUERY
 SELECT
-    'RAW - OpcQueryMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement),
-    NULL
+    '11-OpcQuery', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, MAX(Measurement), NULL
 FROM [Metrics].[MongoDB_Opcounter_Query_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
 
 UNION ALL
-SELECT
-    'RAW - OpcInsertMax',
-    @Process1, @Hour1EST, NULL,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    MAX(Measurement)
-FROM [Metrics].[MongoDB_Opcounter_Insert_15M]
-WHERE [Key] = @Process1
-AND DateTime >= @Hour1UTC_Start
-AND DateTime <  @Hour1UTC_End
 
-ORDER BY ProcessId, Source
+-- 12. OPCOUNTER INSERT
+SELECT
+    '12-OpcInsert', [Key], DateTime,
+    NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, MAX(Measurement)
+FROM [Metrics].[MongoDB_Opcounter_Insert_15M]
+WHERE [Key] IN (
+    'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017',
+    'atlas-ow5xth-shard-00-00.o03zm.mongodb.net:27017'
+)
+AND DateTime >= DATEADD(HOUR, 5, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+AND DateTime < DATEADD(HOUR, 6, (
+    SELECT MAX(DateTimeEST) FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+    WHERE ProcessId = 'atlas-3w60na-shard-00-00.djfry.mongodb.net:27017'
+))
+GROUP BY [Key], DateTime
+
+ORDER BY Source, [Key], DateTime
