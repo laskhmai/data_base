@@ -1,13 +1,4 @@
--- =============================================
--- MongoDB Rightsizing — 5 Minute Version
--- Project : MongoDB Rightsizing — COSD Team Humana
--- DevOps  : 9009227
--- Contents:
---   1. CREATE TABLE  MongoDBRightsizingAggregated5Min
---   2. CREATE PROC   usp_MongoDBRightsizingAggregatedMetrics5Min
---   3. EXECUTE + VERIFY
--- =============================================
-
+-- 
 
 -- =============================================
 -- SECTION 1: CREATE TABLE
