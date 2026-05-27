@@ -5,10 +5,23 @@
 -- DevOps  : 9009227
 -- Version : 2.0
 -- Changes :
---   v2.0 - Added P95 for CPU and Memory
---         - Added Memory % calculation from MetaConfig
---         - Added Connection % calculation from MetaConfig
---         - JOIN to MetaConfig for MemorySizeGB + ConnectionLimit
+--   v2.0 - Added P95 for CPU (CpuMaxP95, CpuAvgP95)
+--         - Added Memory % (MemResidentMaxPct, AvgPct, P95Pct)
+--         - Added Connection % (ConnUtilizationPct)
+--         - JOIN MetaConfig for MemorySizeGB + ConnectionLimit
+--         - Removed raw MemResidentP95 from output table
+-- =============================================
+-- PRE-REQUISITES (run before this proc):
+-- =============================================
+-- Step 1: ALTER TABLE MongoDBRightsizingAggregatedHourly
+--         ADD CpuMaxP95, CpuAvgP95,
+--             MemResidentMaxPct, MemResidentAvgPct,
+--             MemResidentP95Pct, ConnUtilizationPct
+--
+-- Step 2: ALTER TABLE MongoDBMetaConfig
+--         ADD ConnectionLimit INT NULL
+--
+-- Step 3: UPDATE MongoDBMetaConfig SET ConnectionLimit
 -- =============================================
 
 SET ANSI_NULLS ON
@@ -42,9 +55,9 @@ BEGIN
     IF OBJECT_ID('tempdb..#FinalMetrics') IS NOT NULL DROP TABLE #FinalMetrics;
 
     -- =========================================
-    -- 1. CPU AVG + CpuAvgP95
-    -- Source: MongoDB_System_Normalized_Cpu_User_15M
-    -- Unit  : Percent normalized across cores
+    -- 1. CPU AVG + P95
+    -- Source : MongoDB_System_Normalized_Cpu_User_15M
+    -- Unit   : % normalized across cores
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -77,9 +90,9 @@ BEGIN
     FROM Win WHERE rn = 1;
 
     -- =========================================
-    -- 2. CPU MAX + CpuMaxP95 + Gt50/25/10
-    -- Source: MongoDB_System_Normalized_Cpu_User_Max_15M
-    -- Unit  : Percent normalized across cores
+    -- 2. CPU MAX + P95 + Gt50/25/10
+    -- Source : MongoDB_System_Normalized_Cpu_User_Max_15M
+    -- Unit   : % normalized across cores
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -121,10 +134,12 @@ BEGIN
     FROM Win WHERE rn = 1;
 
     -- =========================================
-    -- 3. MEMORY RESIDENT + MemResidentP95
-    -- Source: MongoDB_Memory_Resident_5M
-    -- NOTE  : Using 5M — 15M is DISABLED
-    -- Unit  : MB
+    -- 3. MEMORY RESIDENT + P95
+    -- Source : MongoDB_Memory_Resident_5M
+    -- NOTE   : Using 5M — 15M is DISABLED
+    -- Unit   : MB
+    -- P95 kept in temp table for % calculation
+    -- Raw P95 NOT stored in final table
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -155,14 +170,15 @@ BEGIN
         HourBucket                      AS DateTimeEST,
         COALESCE(MemResidentMax, 0)     AS MemResidentMax,
         COALESCE(MemResidentAvg, 0)     AS MemResidentAvg,
+        -- P95 in temp table only — used to calculate MemResidentP95Pct
         COALESCE(MemResidentP95, 0)     AS MemResidentP95
     INTO #MemResident
     FROM Win WHERE rn = 1;
 
     -- =========================================
     -- 4. MEMORY AVAILABLE
-    -- Source: MongoDB_System_Memory_Available_15M
-    -- Unit  : KB — MIN = worst case free memory
+    -- Source : MongoDB_System_Memory_Available_15M
+    -- Unit   : KB
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -192,8 +208,8 @@ BEGIN
 
     -- =========================================
     -- 5. NETWORK IN AVG
-    -- Source: MongoDB_System_Network_In_15M
-    -- Unit  : BytesPerSec
+    -- Source : MongoDB_System_Network_In_15M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -223,8 +239,8 @@ BEGIN
 
     -- =========================================
     -- 6. NETWORK IN MAX
-    -- Source: MongoDB_System_Network_In_Max_15M
-    -- Unit  : BytesPerSec
+    -- Source : MongoDB_System_Network_In_Max_15M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -254,8 +270,8 @@ BEGIN
 
     -- =========================================
     -- 7. NETWORK OUT AVG
-    -- Source: MongoDB_System_Network_Out_15M
-    -- Unit  : BytesPerSec
+    -- Source : MongoDB_System_Network_Out_15M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -285,8 +301,8 @@ BEGIN
 
     -- =========================================
     -- 8. NETWORK OUT MAX
-    -- Source: MongoDB_System_Network_Out_Max_15M
-    -- Unit  : BytesPerSec
+    -- Source : MongoDB_System_Network_Out_Max_15M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -316,8 +332,8 @@ BEGIN
 
     -- =========================================
     -- 9. NETWORK NUM REQUESTS
-    -- Source: MongoDB_Network_Num_Requests_15M
-    -- Unit  : Scalar_P (requests per second)
+    -- Source : MongoDB_Network_Num_Requests_15M
+    -- Unit   : Scalar_P (requests/sec)
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -347,8 +363,8 @@ BEGIN
 
     -- =========================================
     -- 10. CONNECTIONS
-    -- Source: MongoDB_Connections_15M
-    -- Unit  : Count per process
+    -- Source : MongoDB_Connections_15M
+    -- Unit   : Count per process
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -381,8 +397,8 @@ BEGIN
 
     -- =========================================
     -- 11. OPCOUNTER QUERY
-    -- Source: MongoDB_Opcounter_Query_15M
-    -- Unit  : Scalar_P ops/sec
+    -- Source : MongoDB_Opcounter_Query_15M
+    -- Unit   : Scalar_P ops/sec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -412,8 +428,8 @@ BEGIN
 
     -- =========================================
     -- 12. OPCOUNTER INSERT
-    -- Source: MongoDB_Opcounter_Insert_15M
-    -- Unit  : Scalar_P ops/sec
+    -- Source : MongoDB_Opcounter_Insert_15M
+    -- Unit   : Scalar_P ops/sec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -460,9 +476,9 @@ BEGIN
     -- =========================================
     -- Final Assembly
     -- Flow: Metric → Process → Clusters → MetaConfig
-    -- MetaConfig used for:
-    --   MemorySizeGB    → Memory % calculation
-    --   ConnectionLimit → Connection % calculation
+    -- MetaConfig provides:
+    --   MemorySizeGB    → calculate memory %
+    --   ConnectionLimit → calculate connection %
     -- =========================================
     SELECT
         -- Identity
@@ -504,30 +520,27 @@ BEGIN
         COALESCE(cm.CpuMaxGt25, 0)                                          AS CpuMaxGt25,
         COALESCE(cm.CpuMaxGt10, 0)                                          AS CpuMaxGt10,
 
-        -- Memory RAW (MB)
+        -- Memory RAW (MB) — Max and Avg only
+        -- P95 raw NOT stored — only % stored below
         COALESCE(mr.MemResidentMax,  0)                                     AS MemResidentMax,
         COALESCE(mr.MemResidentAvg,  0)                                     AS MemResidentAvg,
-        COALESCE(mr.MemResidentP95,  0)                                     AS MemResidentP95,
         COALESCE(ma.MemAvailableMin, 0)                                     AS MemAvailableMin,
 
-        -- Memory PERCENTAGE
-        -- Flow: MemResidentMax(MB) / (MetaConfig.MemorySizeGB × 1024) × 100
-        CASE
-            WHEN COALESCE(m.MemorySizeGB, 0) > 0
+        -- Memory % — calculated from MetaConfig.MemorySizeGB
+        CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentMax, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
         END                                                                 AS MemResidentMaxPct,
 
-        CASE
-            WHEN COALESCE(m.MemorySizeGB, 0) > 0
+        CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentAvg, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
         END                                                                 AS MemResidentAvgPct,
 
-        CASE
-            WHEN COALESCE(m.MemorySizeGB, 0) > 0
+        -- P95 % — uses MemResidentP95 from temp table
+        CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentP95, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
@@ -544,10 +557,8 @@ BEGIN
         COALESCE(cn.ConnectionsMax,  0)                                     AS ConnectionsMax,
         COALESCE(cn.ConnectionsAvg,  0)                                     AS ConnectionsAvg,
 
-        -- Connection PERCENTAGE
-        -- Flow: ConnectionsMax / MetaConfig.ConnectionLimit × 100
-        CASE
-            WHEN COALESCE(m.ConnectionLimit, 0) > 0
+        -- Connection % — calculated from MetaConfig.ConnectionLimit
+        CASE WHEN COALESCE(m.ConnectionLimit, 0) > 0
             THEN ROUND((COALESCE(cn.ConnectionsMax, 0)
                  / m.ConnectionLimit) * 100, 2)
             ELSE 0
@@ -565,7 +576,7 @@ BEGIN
     JOIN  [MongoDB].[Clusters]   cl
         ON  cl.ClustersKey = p.ClusterKey
 
-    -- MetaConfig JOIN for memory % and connection %
+    -- MetaConfig JOIN — for memory % and connection %
     LEFT JOIN [Analytics].[MongoDBMetaConfig] m
         ON  m.SkuName  = COALESCE(
                 JSON_VALUE(cl.ReplicationSpecs,
@@ -616,7 +627,6 @@ BEGIN
         -- Memory RAW
         T.MemResidentMax        = S.MemResidentMax,
         T.MemResidentAvg        = S.MemResidentAvg,
-        T.MemResidentP95        = S.MemResidentP95,
         T.MemAvailableMin       = S.MemAvailableMin,
         -- Memory %
         T.MemResidentMaxPct     = S.MemResidentMaxPct,
@@ -658,7 +668,7 @@ BEGIN
         CpuMax, CpuMaxP95,
         CpuMaxGt50, CpuMaxGt25, CpuMaxGt10,
         -- Memory RAW
-        MemResidentMax, MemResidentAvg, MemResidentP95, MemAvailableMin,
+        MemResidentMax, MemResidentAvg, MemAvailableMin,
         -- Memory %
         MemResidentMaxPct, MemResidentAvgPct, MemResidentP95Pct,
         -- Network
@@ -676,7 +686,7 @@ BEGIN
         S.CpuAvg, S.CpuAvgP95,
         S.CpuMax, S.CpuMaxP95,
         S.CpuMaxGt50, S.CpuMaxGt25, S.CpuMaxGt10,
-        S.MemResidentMax, S.MemResidentAvg, S.MemResidentP95, S.MemAvailableMin,
+        S.MemResidentMax, S.MemResidentAvg, S.MemAvailableMin,
         S.MemResidentMaxPct, S.MemResidentAvgPct, S.MemResidentP95Pct,
         S.NetInAvg, S.NetInMax, S.NetOutAvg, S.NetOutMax, S.NetRequestsMax,
         S.ConnectionsMax, S.ConnectionsAvg, S.ConnUtilizationPct,
@@ -703,7 +713,7 @@ EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics]
 GO
 
 -- =============================================
--- Verify new columns populated
+-- Verify all columns populated correctly
 -- =============================================
 SELECT TOP 10
     ClusterName,
@@ -721,4 +731,16 @@ SELECT TOP 10
 FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
 WHERE ProcessType = 'REPLICA_PRIMARY'
 ORDER BY DateTimeEST DESC
+GO
+
+-- Null check for new columns
+SELECT
+    COUNT(*)                                                    AS TotalRows,
+    SUM(CASE WHEN CpuMaxP95          IS NULL THEN 1 ELSE 0 END) AS NullCpuMaxP95,
+    SUM(CASE WHEN CpuAvgP95          IS NULL THEN 1 ELSE 0 END) AS NullCpuAvgP95,
+    SUM(CASE WHEN MemResidentMaxPct  IS NULL THEN 1 ELSE 0 END) AS NullMemMaxPct,
+    SUM(CASE WHEN MemResidentAvgPct  IS NULL THEN 1 ELSE 0 END) AS NullMemAvgPct,
+    SUM(CASE WHEN MemResidentP95Pct  IS NULL THEN 1 ELSE 0 END) AS NullMemP95Pct,
+    SUM(CASE WHEN ConnUtilizationPct IS NULL THEN 1 ELSE 0 END) AS NullConnPct
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
 GO
