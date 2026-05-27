@@ -1,120 +1,19 @@
--- 
-
--- =============================================
--- SECTION 1: CREATE TABLE
--- MongoDBRightsizingAggregated5Min
--- Same structure as MongoDBRightsizingAggregatedHourly
--- Uses 5M source tables — 12 readings per hour
--- More accurate P95 and Gt50/25/10 counts
--- =============================================
-
-CREATE TABLE [Metrics].[MongoDBRightsizingAggregated5Min]
-(
-    -- Identity
-    Id                  BIGINT          IDENTITY(1,1)   NOT NULL,
-    ClusterKey          INT             NULL,
-    ClusterName         NVARCHAR(255)   NULL,
-    ProcessId           NVARCHAR(500)   NOT NULL,
-    ProcessType         NVARCHAR(50)    NULL,
-    ReplicaSetName      NVARCHAR(255)   NULL,
-    ProjectKey          INT             NULL,
-    OrgKey              INT             NULL,
-
-    -- SKU
-    InstanceSize        NVARCHAR(50)    NULL,
-    ProviderName        NVARCHAR(50)    NULL,
-    RegionName          NVARCHAR(100)   NULL,
-
-    -- Time
-    DateTimeEST         DATETIME        NULL,
-    _date               DATE            NULL,
-    _hour               INT             NULL,
-    [type]              NVARCHAR(20)    NULL,
-    businessHour        NVARCHAR(30)    NULL,
-
-    -- CPU
-    CpuAvg              FLOAT           NULL,
-    CpuAvgP95           FLOAT           NULL,
-    CpuMax              FLOAT           NULL,
-    CpuMaxP95           FLOAT           NULL,
-    CpuMaxGt50          INT             NULL,
-    CpuMaxGt25          INT             NULL,
-    CpuMaxGt10          INT             NULL,
-
-    -- Memory RAW (MB)
-    MemResidentMax      FLOAT           NULL,
-    MemResidentAvg      FLOAT           NULL,
-    MemAvailableMin     FLOAT           NULL,
-
-    -- Memory % (calculated from MetaConfig)
-    MemResidentMaxPct   FLOAT           NULL,
-    MemResidentAvgPct   FLOAT           NULL,
-    MemResidentP95Pct   FLOAT           NULL,
-
-    -- Network
-    NetInAvg            FLOAT           NULL,
-    NetInMax            FLOAT           NULL,
-    NetOutAvg           FLOAT           NULL,
-    NetOutMax           FLOAT           NULL,
-    NetRequestsMax      FLOAT           NULL,
-
-    -- Connections
-    ConnectionsMax      FLOAT           NULL,
-    ConnectionsAvg      FLOAT           NULL,
-    ConnUtilizationPct  FLOAT           NULL,
-
-    -- Ops
-    OpcQueryMax         FLOAT           NULL,
-    OpcInsertMax        FLOAT           NULL,
-
-    CONSTRAINT PK_MongoDBRightsizingAggregated5Min
-        PRIMARY KEY CLUSTERED (Id ASC)
-)
-GO
-
--- Indexes
-CREATE INDEX IX_MongoDB_5Min_Upsert
-    ON [Metrics].[MongoDBRightsizingAggregated5Min]
-    (ProcessId, DateTimeEST, _date, _hour, [type], businessHour)
-GO
-
-CREATE INDEX IX_MongoDB_5Min_Cluster
-    ON [Metrics].[MongoDBRightsizingAggregated5Min]
-    (ClusterKey, _date, ProcessType)
-GO
-
--- Verify table created
-SELECT
-    ORDINAL_POSITION AS [#],
-    COLUMN_NAME,
-    DATA_TYPE
-FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = 'MongoDBRightsizingAggregated5Min'
-ORDER BY ORDINAL_POSITION
-GO
-
-
--- =============================================
--- SECTION 2: STORED PROCEDURE
--- usp_MongoDBRightsizingAggregatedMetrics5Min
--- Same logic as 15M proc
--- Only difference: all source tables use _5M
--- 12 readings per hour vs 4 in 15M
--- =============================================
 
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
-
+ 
 CREATE PROC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min] AS
 BEGIN
     SET NOCOUNT ON;
-
+ 
     DECLARE @StartDT DATE = DATEADD(DAY, -7, CAST(GETDATE() AS DATE));
     DECLARE @EndDT   DATE = DATEADD(DAY, +1, CAST(GETDATE() AS DATE));
-
+ 
+    -- =========================================
     -- Drop all temp tables
+    -- =========================================
     IF OBJECT_ID('tempdb..#CpuAvg')       IS NOT NULL DROP TABLE #CpuAvg;
     IF OBJECT_ID('tempdb..#CpuMax')       IS NOT NULL DROP TABLE #CpuMax;
     IF OBJECT_ID('tempdb..#MemResident')  IS NOT NULL DROP TABLE #MemResident;
@@ -129,10 +28,12 @@ BEGIN
     IF OBJECT_ID('tempdb..#OpcInsert')    IS NOT NULL DROP TABLE #OpcInsert;
     IF OBJECT_ID('tempdb..#Keys')         IS NOT NULL DROP TABLE #Keys;
     IF OBJECT_ID('tempdb..#FinalMetrics') IS NOT NULL DROP TABLE #FinalMetrics;
-
+ 
     -- =========================================
     -- 1. CPU AVG + P95
-    -- Source : MongoDB_System_Normalized_Cpu_User_5M
+    -- Source : MongoDB_System_Normalized_Cpu_User_5M ✅ 5M
+    -- Unit   : % normalized across cores
+    -- 12 readings per hour — better P95
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -163,10 +64,12 @@ BEGIN
         COALESCE(CpuAvgP95, 0)  AS CpuAvgP95
     INTO #CpuAvg
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 2. CPU MAX + P95 + Gt50/25/10
-    -- Source : MongoDB_System_Normalized_Cpu_User_Max_5M
+    -- Source : MongoDB_System_Normalized_Cpu_User_Max_5M ✅ 5M
+    -- Unit   : % normalized across cores
+    -- 12 readings per hour — better P95
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -206,11 +109,12 @@ BEGIN
         COALESCE(CpuMaxGt10, 0)     AS CpuMaxGt10
     INTO #CpuMax
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 3. MEMORY RESIDENT + P95
-    -- Source : MongoDB_Memory_Resident_5M
-    -- P95 kept in temp table for % calculation
+    -- Source : MongoDB_Memory_Resident_5M ✅ 5M
+    -- Unit   : MB
+    -- P95 in temp table only — used for % calc
     -- Raw P95 NOT stored in final table
     -- =========================================
     ;WITH Raw AS (
@@ -245,10 +149,11 @@ BEGIN
         COALESCE(MemResidentP95, 0) AS MemResidentP95
     INTO #MemResident
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 4. MEMORY AVAILABLE
-    -- Source : MongoDB_System_Memory_Available_5M
+    -- Source : MongoDB_System_Memory_Available_5M ✅ 5M
+    -- Unit   : KB
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -275,10 +180,11 @@ BEGIN
         COALESCE(MemAvailableMin, 0) AS MemAvailableMin
     INTO #MemAvail
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 5. NETWORK IN AVG
-    -- Source : MongoDB_System_Network_In_5M
+    -- Source : MongoDB_System_Network_In_5M ✅ 5M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -305,10 +211,11 @@ BEGIN
         COALESCE(NetInAvg, 0)   AS NetInAvg
     INTO #NetIn
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 6. NETWORK IN MAX
-    -- Source : MongoDB_System_Network_In_Max_5M
+    -- Source : MongoDB_System_Network_In_Max_5M ✅ 5M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -335,10 +242,11 @@ BEGIN
         COALESCE(NetInMax, 0)   AS NetInMax
     INTO #NetInMax
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 7. NETWORK OUT AVG
-    -- Source : MongoDB_System_Network_Out_5M
+    -- Source : MongoDB_System_Network_Out_5M ✅ 5M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -365,10 +273,11 @@ BEGIN
         COALESCE(NetOutAvg, 0)  AS NetOutAvg
     INTO #NetOut
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 8. NETWORK OUT MAX
-    -- Source : MongoDB_System_Network_Out_Max_5M
+    -- Source : MongoDB_System_Network_Out_Max_5M ✅ 5M
+    -- Unit   : BytesPerSec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -395,10 +304,11 @@ BEGIN
         COALESCE(NetOutMax, 0)  AS NetOutMax
     INTO #NetOutMax
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 9. NETWORK NUM REQUESTS
-    -- Source : MongoDB_Network_Num_Requests_5M
+    -- Source : MongoDB_Network_Num_Requests_5M ✅ 5M
+    -- Unit   : Scalar_P (requests/sec)
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -425,10 +335,13 @@ BEGIN
         COALESCE(NetRequestsMax, 0) AS NetRequestsMax
     INTO #NetRequests
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 10. CONNECTIONS
-    -- Source : MongoDB_Connections_5M
+    -- Source : MongoDB_Connections_15M ✅ 15M
+    -- No 5M table available
+    -- Connections are stable — 15M is sufficient
+    -- Unit   : Count per process
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -437,7 +350,7 @@ BEGIN
                 SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0)
                 AS HourBucket,
             Measurement
-        FROM [Metrics].[MongoDB_Connections_5M]
+        FROM [Metrics].[MongoDB_Connections_15M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
     Win AS (
@@ -458,10 +371,12 @@ BEGIN
         COALESCE(ConnectionsAvg, 0) AS ConnectionsAvg
     INTO #Conns
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 11. OPCOUNTER QUERY
-    -- Source : MongoDB_Opcounter_Query_5M
+    -- Source : MongoDB_Opcounter_Query_15M ✅ 15M
+    -- No 5M table available
+    -- Unit   : Scalar_P ops/sec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -470,7 +385,7 @@ BEGIN
                 SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0)
                 AS HourBucket,
             Measurement
-        FROM [Metrics].[MongoDB_Opcounter_Query_5M]
+        FROM [Metrics].[MongoDB_Opcounter_Query_15M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
     Win AS (
@@ -488,10 +403,12 @@ BEGIN
         COALESCE(OpcQueryMax, 0) AS OpcQueryMax
     INTO #OpcQuery
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- 12. OPCOUNTER INSERT
-    -- Source : MongoDB_Opcounter_Insert_5M
+    -- Source : MongoDB_Opcounter_Insert_15M ✅ 15M
+    -- No 5M table available
+    -- Unit   : Scalar_P ops/sec
     -- =========================================
     ;WITH Raw AS (
         SELECT
@@ -500,7 +417,7 @@ BEGIN
                 SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0)
                 AS HourBucket,
             Measurement
-        FROM [Metrics].[MongoDB_Opcounter_Insert_5M]
+        FROM [Metrics].[MongoDB_Opcounter_Insert_15M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
     Win AS (
@@ -518,7 +435,7 @@ BEGIN
         COALESCE(OpcInsertMax, 0) AS OpcInsertMax
     INTO #OpcInsert
     FROM Win WHERE rn = 1;
-
+ 
     -- =========================================
     -- Keys spine — UNION all metric keys
     -- =========================================
@@ -534,7 +451,7 @@ BEGIN
     UNION SELECT [key], DateTimeEST FROM #Conns
     UNION SELECT [key], DateTimeEST FROM #OpcQuery
     UNION SELECT [key], DateTimeEST FROM #OpcInsert;
-
+ 
     -- =========================================
     -- Final Assembly
     -- Flow: Metric → Process → Clusters → MetaConfig
@@ -551,8 +468,8 @@ BEGIN
         p.ReplicaSetName,
         p.ProjectKey,
         p.OrgKey,
-
-        -- SKU
+ 
+        -- SKU — COALESCE both JSON paths
         COALESCE(
             JSON_VALUE(cl.ReplicationSpecs,
                 '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize'),
@@ -563,7 +480,7 @@ BEGIN
             '$[0].regionConfigs[0].providerName')                           AS ProviderName,
         JSON_VALUE(cl.ReplicationSpecs,
             '$[0].regionConfigs[0].regionName')                             AS RegionName,
-
+ 
         -- Time
         k.DateTimeEST,
         CAST(k.DateTimeEST AS DATE)                                         AS _date,
@@ -572,7 +489,7 @@ BEGIN
              THEN 'Weekend' ELSE 'Weekday' END                              AS [type],
         CASE WHEN DATEPART(HOUR, k.DateTimeEST) BETWEEN 7 AND 18
              THEN 'BusinessHours' ELSE 'NonBusinessHours' END               AS businessHour,
-
+ 
         -- CPU
         COALESCE(ca.CpuAvg,     0)                                          AS CpuAvg,
         COALESCE(ca.CpuAvgP95,  0)                                          AS CpuAvgP95,
@@ -581,53 +498,53 @@ BEGIN
         COALESCE(cm.CpuMaxGt50, 0)                                          AS CpuMaxGt50,
         COALESCE(cm.CpuMaxGt25, 0)                                          AS CpuMaxGt25,
         COALESCE(cm.CpuMaxGt10, 0)                                          AS CpuMaxGt10,
-
+ 
         -- Memory RAW (MB)
         COALESCE(mr.MemResidentMax,  0)                                     AS MemResidentMax,
         COALESCE(mr.MemResidentAvg,  0)                                     AS MemResidentAvg,
         COALESCE(ma.MemAvailableMin, 0)                                     AS MemAvailableMin,
-
-        -- Memory % from MetaConfig
+ 
+        -- Memory % — calculated from MetaConfig.MemorySizeGB
         CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentMax, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
         END                                                                 AS MemResidentMaxPct,
-
+ 
         CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentAvg, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
         END                                                                 AS MemResidentAvgPct,
-
+ 
         CASE WHEN COALESCE(m.MemorySizeGB, 0) > 0
             THEN ROUND((COALESCE(mr.MemResidentP95, 0)
                  / (m.MemorySizeGB * 1024)) * 100, 2)
             ELSE 0
         END                                                                 AS MemResidentP95Pct,
-
+ 
         -- Network
         COALESCE(ni.NetInAvg,        0)                                     AS NetInAvg,
         COALESCE(nim.NetInMax,       0)                                     AS NetInMax,
         COALESCE(no2.NetOutAvg,      0)                                     AS NetOutAvg,
         COALESCE(nom.NetOutMax,      0)                                     AS NetOutMax,
         COALESCE(nr.NetRequestsMax,  0)                                     AS NetRequestsMax,
-
+ 
         -- Connections RAW
         COALESCE(cn.ConnectionsMax,  0)                                     AS ConnectionsMax,
         COALESCE(cn.ConnectionsAvg,  0)                                     AS ConnectionsAvg,
-
-        -- Connection % from MetaConfig
+ 
+        -- Connection % — calculated from MetaConfig.ConnectionLimit
         CASE WHEN COALESCE(m.ConnectionLimit, 0) > 0
             THEN ROUND((COALESCE(cn.ConnectionsMax, 0)
                  / m.ConnectionLimit) * 100, 2)
             ELSE 0
         END                                                                 AS ConnUtilizationPct,
-
+ 
         -- Ops
         COALESCE(oq.OpcQueryMax,     0)                                     AS OpcQueryMax,
         COALESCE(oi.OpcInsertMax,    0)                                     AS OpcInsertMax
-
+ 
     INTO #FinalMetrics
     FROM  #Keys                  k
     JOIN  [MongoDB].[Process]    p
@@ -658,7 +575,7 @@ BEGIN
     LEFT JOIN #Conns       cn   ON  cn.[key]  = k.[key] AND cn.DateTimeEST  = k.DateTimeEST
     LEFT JOIN #OpcQuery    oq   ON  oq.[key]  = k.[key] AND oq.DateTimeEST  = k.DateTimeEST
     LEFT JOIN #OpcInsert   oi   ON  oi.[key]  = k.[key] AND oi.DateTimeEST  = k.DateTimeEST;
-
+ 
     -- =========================================
     -- UPSERT — UPDATE existing rows
     -- =========================================
@@ -673,7 +590,6 @@ BEGIN
         T.InstanceSize          = S.InstanceSize,
         T.ProviderName          = S.ProviderName,
         T.RegionName            = S.RegionName,
-        -- CPU
         T.CpuAvg                = S.CpuAvg,
         T.CpuAvgP95             = S.CpuAvgP95,
         T.CpuMax                = S.CpuMax,
@@ -681,25 +597,20 @@ BEGIN
         T.CpuMaxGt50            = S.CpuMaxGt50,
         T.CpuMaxGt25            = S.CpuMaxGt25,
         T.CpuMaxGt10            = S.CpuMaxGt10,
-        -- Memory RAW
         T.MemResidentMax        = S.MemResidentMax,
         T.MemResidentAvg        = S.MemResidentAvg,
         T.MemAvailableMin       = S.MemAvailableMin,
-        -- Memory %
         T.MemResidentMaxPct     = S.MemResidentMaxPct,
         T.MemResidentAvgPct     = S.MemResidentAvgPct,
         T.MemResidentP95Pct     = S.MemResidentP95Pct,
-        -- Network
         T.NetInAvg              = S.NetInAvg,
         T.NetInMax              = S.NetInMax,
         T.NetOutAvg             = S.NetOutAvg,
         T.NetOutMax             = S.NetOutMax,
         T.NetRequestsMax        = S.NetRequestsMax,
-        -- Connections
         T.ConnectionsMax        = S.ConnectionsMax,
         T.ConnectionsAvg        = S.ConnectionsAvg,
         T.ConnUtilizationPct    = S.ConnUtilizationPct,
-        -- Ops
         T.OpcQueryMax           = S.OpcQueryMax,
         T.OpcInsertMax          = S.OpcInsertMax
     FROM [Metrics].[MongoDBRightsizingAggregated5Min] T
@@ -710,7 +621,7 @@ BEGIN
         AND T._hour        = S._hour
         AND T.[type]       = S.[type]
         AND T.businessHour = S.businessHour;
-
+ 
     -- =========================================
     -- UPSERT — INSERT new rows
     -- =========================================
@@ -751,29 +662,30 @@ BEGIN
         AND   T.[type]       = S.[type]
         AND   T.businessHour = S.businessHour
     );
-
+ 
 END
 GO
-
-
+ 
 -- =============================================
--- SECTION 3: EXECUTE + VERIFY
+-- Execute
 -- =============================================
-
 EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
 GO
-
--- Row count check
+ 
+-- =============================================
+-- Verify
+-- =============================================
+-- Row counts
 SELECT
     COUNT(*)                        AS TotalRows,
-    COUNT(DISTINCT ProcessId)       AS DistinctProcesses,
-    COUNT(DISTINCT ClusterKey)      AS DistinctClusters,
+    COUNT(DISTINCT ProcessId)       AS Processes,
+    COUNT(DISTINCT ClusterKey)      AS Clusters,
     MIN(DateTimeEST)                AS MinDate,
     MAX(DateTimeEST)                AS MaxDate
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 GO
-
--- Sample data — new columns
+ 
+-- Sample data — check P95 is different from Max now!
 SELECT TOP 10
     ClusterName,
     InstanceSize,
@@ -783,7 +695,6 @@ SELECT TOP 10
     CpuMaxP95,
     MemResidentMax,
     MemResidentMaxPct,
-    MemResidentAvgPct,
     MemResidentP95Pct,
     ConnectionsMax,
     ConnUtilizationPct
@@ -791,15 +702,20 @@ FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 WHERE ProcessType = 'REPLICA_PRIMARY'
 ORDER BY DateTimeEST DESC
 GO
-
--- Null check for new columns
+ 
+-- Compare 5M vs 15M — P95 should be different now
 SELECT
-    COUNT(*)                                                    AS TotalRows,
-    SUM(CASE WHEN CpuMaxP95          IS NULL THEN 1 ELSE 0 END) AS NullCpuMaxP95,
-    SUM(CASE WHEN CpuAvgP95          IS NULL THEN 1 ELSE 0 END) AS NullCpuAvgP95,
-    SUM(CASE WHEN MemResidentMaxPct  IS NULL THEN 1 ELSE 0 END) AS NullMemMaxPct,
-    SUM(CASE WHEN MemResidentAvgPct  IS NULL THEN 1 ELSE 0 END) AS NullMemAvgPct,
-    SUM(CASE WHEN MemResidentP95Pct  IS NULL THEN 1 ELSE 0 END) AS NullMemP95Pct,
-    SUM(CASE WHEN ConnUtilizationPct IS NULL THEN 1 ELSE 0 END) AS NullConnPct
+    '15M' AS Source,
+    AVG(CpuMax)    AS AvgCpuMax,
+    AVG(CpuMaxP95) AS AvgCpuMaxP95
+FROM [Metrics].[MongoDBRightsizingAggregatedHourly]
+WHERE ProcessType = 'REPLICA_PRIMARY'
+UNION ALL
+SELECT
+    '5M'  AS Source,
+    AVG(CpuMax)    AS AvgCpuMax,
+    AVG(CpuMaxP95) AS AvgCpuMaxP95
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE ProcessType = 'REPLICA_PRIMARY'
 GO
+ 
