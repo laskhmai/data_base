@@ -1,15 +1,12 @@
--- What SKU/Provider/Region is cdr-uat actually using?
-SELECT
-    cl.Name         AS ClusterName,
-    JSON_VALUE(cl.ReplicationSpecs,
-        '$[0].regionConfigs[0].effectiveElectableSpecs.instanceSize')
-                    AS InstanceSize,
-    JSON_VALUE(cl.ReplicationSpecs,
-        '$[0].regionConfigs[0].providerName')
-                    AS Provider,
-    JSON_VALUE(cl.ReplicationSpecs,
-        '$[0].regionConfigs[0].regionName')
-                    AS Region
-FROM [MongoDB].[Clusters] cl
-WHERE cl.Name = 'cdr-uat'
+-- PREVIEW — see all duplicates first
+WITH CTE AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY SkuName, Provider, Region
+            ORDER BY Id
+        ) AS rn
+    FROM [Analytics].[MongoDBMetaConfig]
+)
+SELECT * FROM CTE WHERE rn > 1
+ORDER BY SkuName, Provider, Region
 GO
