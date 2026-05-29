@@ -1,1 +1,1 @@
-python -m ipykernel install --user --name=work_env --display-name="Work Python 3.13"
+C:\venvs\work_env\Scripts\pip install pandas numpy scikit-learn
