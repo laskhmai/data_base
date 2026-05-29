@@ -1,7 +1,3 @@
-C:\Python-3.13.0\python.exe --version
+pip install pyodbc --index-url https://pypi.org/simple/
 
-C:\Python-3.13.0\python.exe -m venv C:\venvs\work_env
-
-C:\venvs\work_env\Scripts\Activate.ps1
-
-pip install requests pyodbc ipykernel jupyter pandas numpy openpyxl pymongo sqlalchemy
+pip install pyodbc --trusted-host pypi.org --trusted-host files.pythonhosted.org -i https://pypi.org/simple/
