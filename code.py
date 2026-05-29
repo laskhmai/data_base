@@ -1,1 +1,1 @@
-C:\venvs\work_env\Scripts\pip install pyodbc --find-links https://humana.jfrog.io/artifactory/api/pypi/pythonhosted-pypi-remote/simple
+C:\venvs\work_env\Scripts\pip install pyodbc==4.0.39s
