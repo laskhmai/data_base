@@ -1,3 +1,1 @@
-pip install pyodbc --index-url https://pypi.org/simple/
-
-pip install pyodbc --trusted-host pypi.org --trusted-host files.pythonhosted.org -i https://pypi.org/simple/
+python -m ipykernel install --user --name=work_env --display-name="Work Python 3.13"
