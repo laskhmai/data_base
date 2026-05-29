@@ -22,3 +22,5 @@ GROUP BY ClusterName
 HAVING MAX(OpcInsertMax) = 0  -- clusters with ZERO inserts ever
 ORDER BY ClusterName
 GO
+
+C:\venvs\work_env\Scripts\pip install pyodbc
