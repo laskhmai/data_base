@@ -1,11 +1,14 @@
-def fetch_data(sql_query: str) -> pd.DataFrame:
-    try:
-        print("[DEBUG] Executing SQL query:\n", sql_query)
-        conn = connect_to_db()
-        data = pd.read_sql(sql_query, conn)
-        print(f"[DEBUG] Query returned {data.shape[0]} rows and {data.shape[1]} columns.")
-        conn.close()
-        return data
-    except Exception as exc:
-        print(f"Error fetching data: {exc}")
-        return pd.DataFrame()
+# Auto-detect available date range
+date_sql = """
+    SELECT
+        MIN(_date) AS MinDate,
+        MAX(_date) AS MaxDate
+    FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+"""
+date_df = fetch_data(date_sql)
+start_date_dt = date_df["MinDate"].iloc[0]
+end_date_dt   = date_df["MaxDate"].iloc[0]
+
+months        = [end_date_dt.strftime("%Y-%m")]
+start_dates   = [start_date_dt.strftime("%Y-%m-%d")]
+end_dates     = [end_date_dt.strftime("%Y-%m-%d")]
