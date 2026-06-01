@@ -1,2 +1,1 @@
-
-        zkjzlkx
+Hi Neeraja, do you have 30 mins free tomorrow? I finished loading the aggregation table and set up the recommendations table. Wanted to quickly walk you through what I built and make sure everything looks good from your end before we move forward.
