@@ -11,6 +11,7 @@ Implements PostgreSQL-like pattern:
 """
 
 import re
+import json
 import warnings
 from datetime import date, datetime, timedelta, timezone
 
@@ -507,7 +508,44 @@ def build_cluster_metrics_query(cluster_key: int, start_date: str, end_date: str
 
 
 # ===========================================================================
-# 8. MAIN PER-CLUSTER PIPELINE
+# 8. EFFICIENCY CALCULATION
+# ===========================================================================
+
+
+def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: str, specs: dict) -> tuple:
+    avg_cpu  = _safe_mean(data["CpuAvg"])                    if "CpuAvg"             in data.columns else 0.0
+    max_cpu  = _safe_max(data["CpuMax"])                     if "CpuMax"             in data.columns else 0.0
+    avg_mem  = _safe_mean(data["MemResidentAvgPct"])          if "MemResidentAvgPct"  in data.columns else 0.0
+    max_mem  = _safe_max(data["MemResidentMaxPct"])           if "MemResidentMaxPct"  in data.columns else 0.0
+    avg_conn = _safe_mean(data["ConnUtilizationPct"])         if "ConnUtilizationPct" in data.columns else 0.0
+
+    current_efficiency = json.dumps({
+        "CpuAvgPct":  round(avg_cpu,  2),
+        "CpuMaxPct":  round(max_cpu,  2),
+        "MemAvgPct":  round(avg_mem,  2),
+        "MemMaxPct":  round(max_mem,  2),
+        "ConnPct":    round(avg_conn, 2),
+    })
+
+    current_ram  = specs.get(actual_sku,      {}).get("RAM_GB",          0.0)
+    rec_ram      = specs.get(recommended_sku, {}).get("RAM_GB",          0.0)
+    current_conn = specs.get(actual_sku,      {}).get("ConnectionLimit", 0.0)
+    rec_conn     = specs.get(recommended_sku, {}).get("ConnectionLimit", 0.0)
+
+    proj_mem  = round((avg_mem  * current_ram  / rec_ram)  if rec_ram  > 0 else 0.0, 2)
+    proj_conn = round((avg_conn * current_conn / rec_conn) if rec_conn > 0 else 0.0, 2)
+
+    within_efficiency = json.dumps({
+        "ProjectedMemPct":  proj_mem,
+        "ProjectedConnPct": proj_conn,
+        "RecommendedSku":   recommended_sku,
+    })
+
+    return current_efficiency, within_efficiency
+
+
+# ===========================================================================
+# 9. MAIN PER-CLUSTER PIPELINE
 # ===========================================================================
 
 
@@ -594,8 +632,8 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
         "EstimatedMonthlySavings": estimated_monthly_savings,
         "Comment": comment,
         "MiscComment": misc_comment,
-        "CurrentEfficiency": None,
-        "WithinEfficiency": None,
+        "CurrentEfficiency": calculate_efficiency(data, actual_sku, overall_sku, specs)[0],
+        "WithinEfficiency":  calculate_efficiency(data, actual_sku, overall_sku, specs)[1],
         "OutsideEfficiency": None,
         "Spend30days": spend_30_days,
         "WithinFamilySavings": estimated_monthly_savings,
@@ -606,7 +644,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
 
 
 # ===========================================================================
-# 9. OUTPUT INSERT
+# 10. OUTPUT INSERT
 # ===========================================================================
 
 INSERT_SQL = """
@@ -668,7 +706,7 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
 
 
 # ===========================================================================
-# 10. MAIN
+# 11. MAIN
 # ===========================================================================
 
 if __name__ == "__main__":
