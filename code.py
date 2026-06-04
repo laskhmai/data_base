@@ -1,29 +1,27 @@
--- Duplicates by ClusterKey + DayType + HourType
+-- Exact slices per cluster
+SELECT
+    SliceCount,
+    COUNT(*)  AS ClusterCount
+FROM (
+    SELECT
+        ClusterKey,
+        ClusterName,
+        COUNT(*) AS SliceCount
+    FROM [Metrics].[MongoDBRightsizingRecommendations]
+    GROUP BY ClusterKey, ClusterName
+) x
+GROUP BY SliceCount
+ORDER BY SliceCount
+GO
+
 SELECT
     ClusterKey,
     ClusterName,
-    DayType,
-    HourType,
-    COUNT(*) AS RowCount
+    COUNT(*) AS SliceCount,
+    STRING_AGG(DayType + '-' + HourType, ' | ')
+              AS SlicesTheyHave
 FROM [Metrics].[MongoDBRightsizingRecommendations]
-GROUP BY ClusterKey, ClusterName, DayType, HourType
-HAVING COUNT(*) > 1
-ORDER BY RowCount DESC
-
--- Show the actual duplicate rows
-SELECT *
-FROM [Metrics].[MongoDBRightsizingRecommendations]
-WHERE ClusterKey IN (
-    SELECT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    GROUP BY ClusterKey, DayType, HourType
-    HAVING COUNT(*) > 1
-)
-ORDER BY ClusterKey, DayType, HourType
-
--- Should be exactly 855 = 285 clusters × 3 slices
-SELECT
-    COUNT(*)                    AS TotalRows,
-    COUNT(DISTINCT ClusterKey)  AS UniqueClusters,
-    COUNT(*) / COUNT(DISTINCT ClusterKey) AS SlicesPerCluster
-FROM [Metrics].[MongoDBRightsizingRecommendations]
+GROUP BY ClusterKey, ClusterName
+HAVING COUNT(*) < 3
+ORDER BY ClusterName
+GO
