@@ -1,11 +1,29 @@
-Adapted existing PostgreSQL rightsizing model
-for MongoDB. Modified parameters to match
-MongoDB tables and sharding structure.
+-- Duplicates by ClusterKey + DayType + HourType
+SELECT
+    ClusterKey,
+    ClusterName,
+    DayType,
+    HourType,
+    COUNT(*) AS RowCount
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+GROUP BY ClusterKey, ClusterName, DayType, HourType
+HAVING COUNT(*) > 1
+ORDER BY RowCount DESC
 
-Ran for all 284 clusters (exceeds 10% target).
-839 recommendations generated and validated.
+-- Show the actual duplicate rows
+SELECT *
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE ClusterKey IN (
+    SELECT ClusterKey
+    FROM [Metrics].[MongoDBRightsizingRecommendations]
+    GROUP BY ClusterKey, DayType, HourType
+    HAVING COUNT(*) > 1
+)
+ORDER BY ClusterKey, DayType, HourType
 
-Results: 178 Downsize, 24 Upsize, 85 NoChange.
-Potential monthly savings: $42,266.
-
-Output: [Metrics].[MongoDBRightsizingRecommendations]
+-- Should be exactly 855 = 285 clusters × 3 slices
+SELECT
+    COUNT(*)                    AS TotalRows,
+    COUNT(DISTINCT ClusterKey)  AS UniqueClusters,
+    COUNT(*) / COUNT(DISTINCT ClusterKey) AS SlicesPerCluster
+FROM [Metrics].[MongoDBRightsizingRecommendations]
