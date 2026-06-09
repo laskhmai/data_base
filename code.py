@@ -1,12 +1,21 @@
-Completed the simulated metrics implementation. 
+SELECT
+    COUNT(DISTINCT ClusterKey)      AS ClustersAbove100Pct,
+    COUNT(DISTINCT ClusterKey) * 100.0 /
+    (SELECT COUNT(DISTINCT ClusterKey)
+     FROM [Metrics].[MongoDBRightsizingAggregated5Min]) AS PctOfTotal
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE MemResidentMaxPct > 100
+GO
 
-Generated projected CPU, memory, and connection 
-utilization based on right-sizing recommendations. 
-CurrentEfficiency shows actual usage on the current 
-SKU and WithinEfficiency shows the projected usage 
-after the recommended SKU change — giving a clear 
-before vs after comparison.
-
-Results are stored in 
-[Metrics].[MongoDBRightsizingRecommendations] 
-across 284 clusters. No production data was affected.
+-- Detail per cluster
+SELECT
+    ClusterName,
+    InstanceSize,
+    ROUND(MAX(MemResidentMaxPct),     2) AS MaxMemPct,
+    ROUND(AVG(MemResidentAvgPct),     2) AS AvgMemPct,
+    ROUND(MIN(MemAvailableMin)/1024,  2) AS MinFreeMemMB
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE MemResidentMaxPct > 100
+GROUP BY ClusterName, InstanceSize
+ORDER BY MaxMemPct DESC
+GO
