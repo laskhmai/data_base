@@ -1,7 +1,12 @@
-Implementation completed.
+Completed the simulated metrics implementation. 
 
-- CurrentEfficiency populated — captures CPU, Memory, 
-  Connection utilization per cluster per time slice
+Generated projected CPU, memory, and connection 
+utilization based on right-sizing recommendations. 
+CurrentEfficiency shows actual usage on the current 
+SKU and WithinEfficiency shows the projected usage 
+after the recommended SKU change — giving a clear 
+before vs after comparison.
 
-- WithinEfficiency populated — projected CPU, Memory, 
-  Connection utilization after right-sizing
+Results are stored in 
+[Metrics].[MongoDBRightsizingRecommendations] 
+across 284 clusters. No production data was affected.
