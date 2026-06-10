@@ -1,4 +1,4 @@
--- =============================================
+-- -- =============================================
 -- Stored Procedure: usp_MongoDBRightsizingAggregatedMetrics5Min
 -- Schema  : Metrics
 -- Project : MongoDB Rightsizing — COSD Team Humana
@@ -115,10 +115,9 @@ BEGIN
     INTO #CpuMax FROM Win WHERE rn = 1;
 
     -- =========================================
-    -- TRUE CLUSTER P95 — CPU
+    -- TRUE CLUSTER P95 — CPU MAX
     -- Combines ALL process readings per cluster
     -- per hour then calculates real P95
-    -- This is the statistically correct approach
     -- =========================================
     IF OBJECT_ID('tempdb..#ClusterCpuP95') IS NOT NULL DROP TABLE #ClusterCpuP95;
 
@@ -128,20 +127,36 @@ BEGIN
             SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0)
             AS DateTimeEST,
         PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY m.Measurement) AS CpuMaxP95_True,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY avgm.AvgMeasurement) AS CpuAvgP95_True
+            WITHIN GROUP (ORDER BY m.Measurement)    AS CpuMaxP95_True
     INTO #ClusterCpuP95
     FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M] m
     JOIN [MongoDB].[Process] p
         ON  p.ProcessId = m.[key]
         AND p.IsDeleted = 0
-    CROSS APPLY (
-        SELECT AVG(m2.Measurement) AS AvgMeasurement
-        FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M] m2
-        WHERE m2.[key]    = m.[key]
-        AND   m2.DateTime = m.DateTime
-    ) avgm
+    WHERE m.DateTime >= @StartDT
+    AND   m.DateTime <  @EndDT
+    GROUP BY
+        p.ClusterKey,
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0);
+
+    -- =========================================
+    -- TRUE CLUSTER P95 — CPU AVG
+    -- =========================================
+    IF OBJECT_ID('tempdb..#ClusterCpuAvgP95') IS NOT NULL DROP TABLE #ClusterCpuAvgP95;
+
+    SELECT
+        p.ClusterKey,
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0)
+            AS DateTimeEST,
+        PERCENTILE_CONT(0.95)
+            WITHIN GROUP (ORDER BY m.Measurement)    AS CpuAvgP95_True
+    INTO #ClusterCpuAvgP95
+    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M] m
+    JOIN [MongoDB].[Process] p
+        ON  p.ProcessId = m.[key]
+        AND p.IsDeleted = 0
     WHERE m.DateTime >= @StartDT
     AND   m.DateTime <  @EndDT
     GROUP BY
@@ -620,12 +635,19 @@ BEGIN
     -- Update with TRUE cluster P95 values
     UPDATE cm
     SET
-        cm.CpuMaxP95         = cp.CpuMaxP95_True,
-        cm.CpuAvgP95         = cp.CpuAvgP95_True
+        cm.CpuMaxP95 = cp.CpuMaxP95_True
     FROM #ClusterMetrics cm
     JOIN #ClusterCpuP95  cp
         ON  cp.ClusterKey  = cm.ClusterKey
         AND cp.DateTimeEST = cm.DateTimeEST;
+
+    UPDATE cm
+    SET
+        cm.CpuAvgP95 = ca.CpuAvgP95_True
+    FROM #ClusterMetrics cm
+    JOIN #ClusterCpuAvgP95 ca
+        ON  ca.ClusterKey  = cm.ClusterKey
+        AND ca.DateTimeEST = cm.DateTimeEST;
 
     -- =========================================
     -- UPSERT — UPDATE existing rows
@@ -719,6 +741,48 @@ BEGIN
 END
 GO
 
+-- =============================================
+-- DEPLOY STEPS
+-- =============================================
+-- Step 1: TRUNCATE TABLE [Metrics].[MongoDBRightsizingAggregated5Min];
+-- Step 2: Run CREATE OR ALTER PROC above
+-- Step 3: EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
+-- Step 4: Run verify queries below
+
+-- =============================================
+-- VERIFY
+-- =============================================
+
+-- Row counts
+SELECT
+    COUNT(*)                   AS TotalRows,
+    COUNT(DISTINCT ClusterKey) AS Clusters,
+    MIN(DateTimeEST)           AS MinDate,
+    MAX(DateTimeEST)           AS MaxDate
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+GO
+
+-- No duplicates — must return ZERO rows
+SELECT ClusterKey, ClusterName, _date, _hour, COUNT(*) AS RowCount
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+GROUP BY ClusterKey, ClusterName, _date, _hour
+HAVING COUNT(*) > 1
+ORDER BY RowCount DESC
+GO
+
+-- cdr-uat spot check
+-- ConnUtilizationPct should now show ~3.44% (2200/64000)
+SELECT
+    ClusterKey, ClusterName,
+    _date, _hour,
+    CpuMax,
+    MemResidentMaxPct,
+    ConnectionsMax,
+    ConnUtilizationPct
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE ClusterKey = 330
+ORDER BY _date, _hour
+GO
 -- -- Save current values before update
 SELECT
     ClusterName,
