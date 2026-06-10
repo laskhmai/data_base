@@ -719,45 +719,45 @@ BEGIN
 END
 GO
 
--- =============================================
--- DEPLOY STEPS
--- =============================================
--- Step 1: TRUNCATE TABLE [Metrics].[MongoDBRightsizingAggregated5Min];
--- Step 2: Run CREATE OR ALTER PROC above
--- Step 3: EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
--- Step 4: Run verify queries below
-
--- =============================================
--- VERIFY
--- =============================================
-
--- Row counts
+-- -- Save current values before update
 SELECT
-    COUNT(*)                   AS TotalRows,
-    COUNT(DISTINCT ClusterKey) AS Clusters,
-    MIN(DateTimeEST)           AS MinDate,
-    MAX(DateTimeEST)           AS MaxDate
+    ClusterName,
+    _date,
+    _hour,
+    ROUND(CpuMaxP95,        2) AS CpuMaxP95_Current,
+    ROUND(CpuAvgP95,        2) AS CpuAvgP95_Current,
+    ROUND(MemResidentP95Pct,2) AS MemP95_Current,
+    ROUND(MemAvailableMin,  0) AS MemAvailableMin_Current
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE ClusterName = 'cdr-uat'      -- change cluster
+AND   _date       = '2026-05-22'   -- change date
+ORDER BY _hour
 GO
 
--- No duplicates — must return ZERO rows
-SELECT ClusterKey, ClusterName, _date, _hour, COUNT(*) AS RowCount
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-GROUP BY ClusterKey, ClusterName, _date, _hour
-HAVING COUNT(*) > 1
-ORDER BY RowCount DESC
+
+-- 1. Add new columns first
+ALTER TABLE [Metrics].[MongoDBRightsizingAggregated5Min]
+ADD MaxCpuProcessId NVARCHAR(500) NULL,
+    MaxMemProcessId NVARCHAR(500) NULL
 GO
 
--- cdr-uat spot check
--- ConnUtilizationPct should now show ~3.44% (2200/64000)
+-- 2. Run v4 proc
+EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
+GO
+
+-- Compare new values vs old
 SELECT
-    ClusterKey, ClusterName,
-    _date, _hour,
-    CpuMax,
-    MemResidentMaxPct,
-    ConnectionsMax,
-    ConnUtilizationPct
+    ClusterName,
+    _date,
+    _hour,
+    ROUND(CpuMaxP95,        2) AS CpuMaxP95_New,
+    ROUND(CpuAvgP95,        2) AS CpuAvgP95_New,
+    ROUND(MemResidentP95Pct,2) AS MemP95_New,
+    ROUND(MemAvailableMin,  0) AS MemAvailableMin_New,
+    MaxCpuProcessId,
+    MaxMemProcessId
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterKey = 330
-ORDER BY _date, _hour
+WHERE ClusterName = 'cdr-uat'      -- same cluster
+AND   _date       = '2026-05-22'   -- same date
+ORDER BY _hour
 GO
