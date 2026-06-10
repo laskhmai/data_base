@@ -526,24 +526,48 @@ BEGIN
     -- =========================================
     -- STEP 1B — True Cluster-Level P95
     -- Neeraja instruction (10-Jun-2026):
-    -- "if name suggests 95thpct then its 95th pct"
-    -- Uses PERCENTILE_CONT with GROUP BY (no OVER)
+    -- PERCENTILE_CONT GROUP BY also fails in Synapse
+    -- Using ROW_NUMBER + COUNT approach instead
+    -- Picks value at 95th percentile position
     -- Synapse compatible ✅
     -- =========================================
+    ;WITH Ranked AS (
+        SELECT
+            ClusterKey,
+            _date,
+            _hour,
+            [type],
+            businessHour,
+            CpuAvg,
+            CpuMax,
+            MemResidentMaxPct,
+            ROW_NUMBER() OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour
+                ORDER BY CpuAvg ASC)              AS CpuAvgRn,
+            ROW_NUMBER() OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour
+                ORDER BY CpuMax ASC)              AS CpuMaxRn,
+            ROW_NUMBER() OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour
+                ORDER BY MemResidentMaxPct ASC)   AS MemRn,
+            COUNT(*) OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour) AS Cnt
+        FROM #FinalMetrics
+    )
     SELECT
         ClusterKey,
         _date,
         _hour,
         [type],
         businessHour,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY CpuAvg)           AS CpuAvgP95,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY CpuMax)           AS CpuMaxP95,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY MemResidentMaxPct) AS MemResidentP95Pct
+        MAX(CASE WHEN CpuAvgRn = CAST(CEILING(Cnt * 0.95) AS INT)
+                 THEN CpuAvg           END)       AS CpuAvgP95,
+        MAX(CASE WHEN CpuMaxRn = CAST(CEILING(Cnt * 0.95) AS INT)
+                 THEN CpuMax           END)       AS CpuMaxP95,
+        MAX(CASE WHEN MemRn    = CAST(CEILING(Cnt * 0.95) AS INT)
+                 THEN MemResidentMaxPct END)      AS MemResidentP95Pct
     INTO #TrueClusterP95
-    FROM #FinalMetrics
+    FROM Ranked
     GROUP BY ClusterKey, _date, _hour, [type], businessHour;
 
     -- =========================================
