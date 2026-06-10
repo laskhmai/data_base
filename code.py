@@ -51,6 +51,20 @@ BEGIN
     -- 1. CPU AVG + P95
     -- Source : MongoDB_System_Normalized_Cpu_User_5M
     -- =========================================
+    -- CpuAvg: separate P95 temp table (Synapse compatible)
+    IF OBJECT_ID('tempdb..#CpuAvgP95Tmp') IS NOT NULL DROP TABLE #CpuAvgP95Tmp;
+    SELECT
+        [key],
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS DateTimeEST,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY Measurement) AS CpuAvgP95
+    INTO #CpuAvgP95Tmp
+    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
+    WHERE DateTime >= @StartDT AND DateTime < @EndDT
+    GROUP BY [key],
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0);
+
     ;WITH Raw AS (
         SELECT
             [key],
@@ -61,33 +75,42 @@ BEGIN
         FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
-    P95Avg AS (
-        SELECT [key], HourBucket,
-               PERCENTILE_CONT(0.95)
-                   WITHIN GROUP (ORDER BY Measurement) AS CpuAvgP95
-        FROM Raw
-        GROUP BY [key], HourBucket
-    ),
     Win AS (
         SELECT
-            r.[key], r.HourBucket,
-            AVG(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS CpuAvg,
-            ROW_NUMBER() OVER (PARTITION BY r.[key], r.HourBucket
-                               ORDER BY (SELECT 0))                      AS rn
-        FROM Raw r
+            [key], HourBucket,
+            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuAvg,
+            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
+                               ORDER BY (SELECT 0))                AS rn
+        FROM Raw
     )
     SELECT  w.[key], w.HourBucket AS DateTimeEST,
-            COALESCE(w.CpuAvg,     0) AS CpuAvg,
-            COALESCE(p.CpuAvgP95,  0) AS CpuAvgP95
+            COALESCE(w.CpuAvg,    0) AS CpuAvg,
+            COALESCE(p.CpuAvgP95, 0) AS CpuAvgP95
     INTO #CpuAvg
     FROM Win w
-    JOIN P95Avg p ON p.[key] = w.[key] AND p.HourBucket = w.HourBucket
+    LEFT JOIN #CpuAvgP95Tmp p
+        ON  p.[key]       = w.[key]
+        AND p.DateTimeEST = w.HourBucket
     WHERE w.rn = 1;
 
     -- =========================================
     -- 2. CPU MAX + P95 + Gt50/25/10
     -- Source : MongoDB_System_Normalized_Cpu_User_Max_5M
     -- =========================================
+    -- CpuMax: separate P95 temp table (Synapse compatible)
+    IF OBJECT_ID('tempdb..#CpuMaxP95Tmp') IS NOT NULL DROP TABLE #CpuMaxP95Tmp;
+    SELECT
+        [key],
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0) AS DateTimeEST,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY Measurement) AS CpuMaxP95
+    INTO #CpuMaxP95Tmp
+    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M]
+    WHERE DateTime >= @StartDT AND DateTime < @EndDT
+    GROUP BY [key],
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, DateTime), '-05:00')), 0);
+
     ;WITH Raw AS (
         SELECT
             [key],
@@ -98,88 +121,32 @@ BEGIN
         FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
-    -- P95 as ordered-set aggregate (Synapse compatible - no OVER clause)
-    P95 AS (
-        SELECT [key], HourBucket,
-               PERCENTILE_CONT(0.95)
-                   WITHIN GROUP (ORDER BY Measurement) AS CpuMaxP95
-        FROM Raw
-        GROUP BY [key], HourBucket
-    ),
     Win AS (
         SELECT
-            r.[key], r.HourBucket,
-            MAX(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS CpuMax,
-            SUM(CASE WHEN r.Measurement > 50 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt50,
-            SUM(CASE WHEN r.Measurement > 25 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt25,
-            SUM(CASE WHEN r.Measurement > 10 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt10,
-            ROW_NUMBER() OVER (PARTITION BY r.[key], r.HourBucket
-                               ORDER BY (SELECT 0))                    AS rn
-        FROM Raw r
+            [key], HourBucket,
+            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuMax,
+            SUM(CASE WHEN Measurement > 50 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt50,
+            SUM(CASE WHEN Measurement > 25 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt25,
+            SUM(CASE WHEN Measurement > 10 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt10,
+            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
+                               ORDER BY (SELECT 0))                AS rn
+        FROM Raw
     )
     SELECT  w.[key], w.HourBucket AS DateTimeEST,
-            COALESCE(w.CpuMax,      0) AS CpuMax,
-            COALESCE(p.CpuMaxP95,   0) AS CpuMaxP95,
-            COALESCE(w.CpuMaxGt50,  0) AS CpuMaxGt50,
-            COALESCE(w.CpuMaxGt25,  0) AS CpuMaxGt25,
-            COALESCE(w.CpuMaxGt10,  0) AS CpuMaxGt10
+            COALESCE(w.CpuMax,     0) AS CpuMax,
+            COALESCE(p.CpuMaxP95,  0) AS CpuMaxP95,
+            COALESCE(w.CpuMaxGt50, 0) AS CpuMaxGt50,
+            COALESCE(w.CpuMaxGt25, 0) AS CpuMaxGt25,
+            COALESCE(w.CpuMaxGt10, 0) AS CpuMaxGt10
     INTO #CpuMax
     FROM Win w
-    JOIN P95 p ON p.[key] = w.[key] AND p.HourBucket = w.HourBucket
+    LEFT JOIN #CpuMaxP95Tmp p
+        ON  p.[key]       = w.[key]
+        AND p.DateTimeEST = w.HourBucket
     WHERE w.rn = 1;
-
-    -- =========================================
-    -- TRUE CLUSTER P95 — CPU MAX
-    -- Combines ALL process readings per cluster
-    -- per hour then calculates real P95
-    -- =========================================
-    IF OBJECT_ID('tempdb..#ClusterCpuP95') IS NOT NULL DROP TABLE #ClusterCpuP95;
-
-    SELECT
-        p.ClusterKey,
-        DATEADD(HOUR, DATEDIFF(HOUR, 0,
-            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0)
-            AS DateTimeEST,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY m.Measurement)    AS CpuMaxP95_True
-    INTO #ClusterCpuP95
-    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M] m
-    JOIN [MongoDB].[Process] p
-        ON  p.ProcessId = m.[key]
-        AND p.IsDeleted = 0
-    WHERE m.DateTime >= @StartDT
-    AND   m.DateTime <  @EndDT
-    GROUP BY
-        p.ClusterKey,
-        DATEADD(HOUR, DATEDIFF(HOUR, 0,
-            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0);
-
-    -- =========================================
-    -- TRUE CLUSTER P95 — CPU AVG
-    -- =========================================
-    IF OBJECT_ID('tempdb..#ClusterCpuAvgP95') IS NOT NULL DROP TABLE #ClusterCpuAvgP95;
-
-    SELECT
-        p.ClusterKey,
-        DATEADD(HOUR, DATEDIFF(HOUR, 0,
-            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0)
-            AS DateTimeEST,
-        PERCENTILE_CONT(0.95)
-            WITHIN GROUP (ORDER BY m.Measurement)    AS CpuAvgP95_True
-    INTO #ClusterCpuAvgP95
-    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M] m
-    JOIN [MongoDB].[Process] p
-        ON  p.ProcessId = m.[key]
-        AND p.IsDeleted = 0
-    WHERE m.DateTime >= @StartDT
-    AND   m.DateTime <  @EndDT
-    GROUP BY
-        p.ClusterKey,
-        DATEADD(HOUR, DATEDIFF(HOUR, 0,
-            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0);
 
     -- =========================================
     -- 3. MEMORY RESIDENT + P95
@@ -603,7 +570,7 @@ BEGIN
         AVG(CpuAvg)             AS CpuAvg,
         AVG(CpuAvgP95)          AS CpuAvgP95,
         MAX(CpuMax)             AS CpuMax,
-        AVG(CpuMaxP95)          AS CpuMaxP95,    -- FIXED: AVG not MAX (true cluster P95)
+        AVG(CpuMaxP95)          AS CpuMaxP95,
         SUM(CpuMaxGt50)         AS CpuMaxGt50,
         SUM(CpuMaxGt25)         AS CpuMaxGt25,
         SUM(CpuMaxGt10)         AS CpuMaxGt10,
@@ -611,10 +578,10 @@ BEGIN
         -- Memory — worst process drives sizing
         MAX(MemResidentMax)     AS MemResidentMax,
         AVG(MemResidentAvg)     AS MemResidentAvg,
-        MIN(MemAvailableMin)    AS MemAvailableMin,  -- FIXED: MIN not MAX (worst shard)
+        MIN(MemAvailableMin)    AS MemAvailableMin,
         MAX(MemResidentMaxPct)  AS MemResidentMaxPct,
         AVG(MemResidentAvgPct)  AS MemResidentAvgPct,
-        AVG(MemResidentP95Pct)  AS MemResidentP95Pct,  -- FIXED: AVG not MAX (true cluster P95)
+        AVG(MemResidentP95Pct)  AS MemResidentP95Pct,
 
         -- Network
         AVG(NetInAvg)           AS NetInAvg,
@@ -637,42 +604,62 @@ BEGIN
 
         -- Ops
         MAX(OpcQueryMax)        AS OpcQueryMax,
-        MAX(OpcInsertMax)       AS OpcInsertMax,
-
-        -- ProcessKey columns (added v4 — for validation and simulated metrics)
-        MAX(CASE WHEN CpuMax = (
-                SELECT MAX(CpuMax) FROM #FinalMetrics f2
-                WHERE f2.ClusterKey  = f.ClusterKey
-                AND   f2.DateTimeEST = f.DateTimeEST)
-            THEN ProcessId END)   AS MaxCpuProcessId,
-        MAX(CASE WHEN MemResidentMax = (
-                SELECT MAX(MemResidentMax) FROM #FinalMetrics f2
-                WHERE f2.ClusterKey  = f.ClusterKey
-                AND   f2.DateTimeEST = f.DateTimeEST)
-            THEN ProcessId END)   AS MaxMemProcessId
+        MAX(OpcInsertMax)       AS OpcInsertMax
 
     INTO #ClusterMetrics
-    FROM #FinalMetrics f
+    FROM #FinalMetrics
     GROUP BY
         ClusterKey, ClusterName,
         DateTimeEST, _date, _hour, [type], businessHour;
 
-    -- Update with TRUE cluster P95 values
-    UPDATE cm
-    SET
-        cm.CpuMaxP95 = cp.CpuMaxP95_True
-    FROM #ClusterMetrics cm
-    JOIN #ClusterCpuP95  cp
-        ON  cp.ClusterKey  = cm.ClusterKey
-        AND cp.DateTimeEST = cm.DateTimeEST;
+    -- Add ProcessKey columns (which process had MAX CPU and MAX Memory)
+    ALTER TABLE #ClusterMetrics ADD MaxCpuProcessId NVARCHAR(500) NULL;
+    ALTER TABLE #ClusterMetrics ADD MaxMemProcessId NVARCHAR(500) NULL;
 
     UPDATE cm
-    SET
-        cm.CpuAvgP95 = ca.CpuAvgP95_True
+    SET cm.MaxCpuProcessId = f.ProcessId
     FROM #ClusterMetrics cm
-    JOIN #ClusterCpuAvgP95 ca
-        ON  ca.ClusterKey  = cm.ClusterKey
-        AND ca.DateTimeEST = cm.DateTimeEST;
+    JOIN #FinalMetrics f
+        ON  f.ClusterKey  = cm.ClusterKey
+        AND f.DateTimeEST = cm.DateTimeEST
+        AND f.CpuMax      = cm.CpuMax;
+
+    UPDATE cm
+    SET cm.MaxMemProcessId = f.ProcessId
+    FROM #ClusterMetrics cm
+    JOIN #FinalMetrics f
+        ON  f.ClusterKey      = cm.ClusterKey
+        AND f.DateTimeEST     = cm.DateTimeEST
+        AND f.MemResidentMax  = cm.MemResidentMax;
+
+    -- =========================================
+    -- TRUE CLUSTER P95 — from raw readings
+    -- =========================================
+    IF OBJECT_ID('tempdb..#TrueClusterCpuP95') IS NOT NULL DROP TABLE #TrueClusterCpuP95;
+
+    SELECT
+        p.ClusterKey,
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0) AS DateTimeEST,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY m.Measurement) AS CpuMaxP95_True
+    INTO #TrueClusterCpuP95
+    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M] m
+    JOIN [MongoDB].[Process] p
+        ON  p.ProcessId = m.[key]
+        AND p.IsDeleted = 0
+    WHERE m.DateTime >= @StartDT
+    AND   m.DateTime <  @EndDT
+    GROUP BY
+        p.ClusterKey,
+        DATEADD(HOUR, DATEDIFF(HOUR, 0,
+            SWITCHOFFSET(CONVERT(datetimeoffset, m.DateTime), '-05:00')), 0);
+
+    UPDATE cm
+    SET cm.CpuMaxP95 = t.CpuMaxP95_True
+    FROM #ClusterMetrics cm
+    JOIN #TrueClusterCpuP95 t
+        ON  t.ClusterKey  = cm.ClusterKey
+        AND t.DateTimeEST = cm.DateTimeEST;
 
     -- =========================================
     -- UPSERT — UPDATE existing rows
@@ -708,9 +695,7 @@ BEGIN
         T.ConnectionsAvg        = S.ConnectionsAvg,
         T.ConnUtilizationPct    = S.ConnUtilizationPct,
         T.OpcQueryMax           = S.OpcQueryMax,
-        T.OpcInsertMax          = S.OpcInsertMax,
-        T.MaxCpuProcessId       = S.MaxCpuProcessId,
-        T.MaxMemProcessId       = S.MaxMemProcessId
+        T.OpcInsertMax          = S.OpcInsertMax
     FROM [Metrics].[MongoDBRightsizingAggregated5Min] T
     JOIN #ClusterMetrics S
         ON  T.ClusterKey   = S.ClusterKey
@@ -735,8 +720,7 @@ BEGIN
         MemResidentMaxPct, MemResidentAvgPct, MemResidentP95Pct,
         NetInAvg, NetInMax, NetOutAvg, NetOutMax, NetRequestsMax,
         ConnectionsMax, ConnectionsAvg, ConnUtilizationPct,
-        OpcQueryMax, OpcInsertMax,
-        MaxCpuProcessId, MaxMemProcessId
+        OpcQueryMax, OpcInsertMax
     )
     SELECT
         S.ClusterKey, S.ClusterName,
@@ -749,8 +733,7 @@ BEGIN
         S.MemResidentMaxPct, S.MemResidentAvgPct, S.MemResidentP95Pct,
         S.NetInAvg, S.NetInMax, S.NetOutAvg, S.NetOutMax, S.NetRequestsMax,
         S.ConnectionsMax, S.ConnectionsAvg, S.ConnUtilizationPct,
-        S.OpcQueryMax, S.OpcInsertMax,
-        S.MaxCpuProcessId, S.MaxMemProcessId
+        S.OpcQueryMax, S.OpcInsertMax
     FROM #ClusterMetrics S
     WHERE NOT EXISTS (
         SELECT 1
@@ -764,47 +747,4 @@ BEGIN
     );
 
 END
-GO
-
--- =============================================
--- DEPLOY STEPS
--- =============================================
--- Step 1: TRUNCATE TABLE [Metrics].[MongoDBRightsizingAggregated5Min];
--- Step 2: Run CREATE OR ALTER PROC above
--- Step 3: EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
--- Step 4: Run verify queries below
-
--- =============================================
--- VERIFY
--- =============================================
-
--- Row counts
-SELECT
-    COUNT(*)                   AS TotalRows,
-    COUNT(DISTINCT ClusterKey) AS Clusters,
-    MIN(DateTimeEST)           AS MinDate,
-    MAX(DateTimeEST)           AS MaxDate
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-GO
-
--- No duplicates — must return ZERO rows
-SELECT ClusterKey, ClusterName, _date, _hour, COUNT(*) AS RowCount
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-GROUP BY ClusterKey, ClusterName, _date, _hour
-HAVING COUNT(*) > 1
-ORDER BY RowCount DESC
-GO
-
--- cdr-uat spot check
--- ConnUtilizationPct should now show ~3.44% (2200/64000)
-SELECT
-    ClusterKey, ClusterName,
-    _date, _hour,
-    CpuMax,
-    MemResidentMaxPct,
-    ConnectionsMax,
-    ConnUtilizationPct
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterKey = 330
-ORDER BY _date, _hour
 GO
