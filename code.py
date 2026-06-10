@@ -1,4 +1,4 @@
--- -- =============================================
+-- =============================================
 -- Stored Procedure: usp_MongoDBRightsizingAggregatedMetrics5Min
 -- Schema  : Metrics
 -- Project : MongoDB Rightsizing — COSD Team Humana
@@ -61,20 +61,28 @@ BEGIN
         FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
+    P95Avg AS (
+        SELECT [key], HourBucket,
+               PERCENTILE_CONT(0.95)
+                   WITHIN GROUP (ORDER BY Measurement) AS CpuAvgP95
+        FROM Raw
+        GROUP BY [key], HourBucket
+    ),
     Win AS (
         SELECT
-            [key], HourBucket,
-            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuAvg,
-            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY Measurement)
-                OVER (PARTITION BY [key], HourBucket)              AS CpuAvgP95,
-            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
-                               ORDER BY (SELECT 0))                AS rn
-        FROM Raw
+            r.[key], r.HourBucket,
+            AVG(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS CpuAvg,
+            ROW_NUMBER() OVER (PARTITION BY r.[key], r.HourBucket
+                               ORDER BY (SELECT 0))                      AS rn
+        FROM Raw r
     )
-    SELECT [key], HourBucket AS DateTimeEST,
-           COALESCE(CpuAvg,    0) AS CpuAvg,
-           COALESCE(CpuAvgP95, 0) AS CpuAvgP95
-    INTO #CpuAvg FROM Win WHERE rn = 1;
+    SELECT  w.[key], w.HourBucket AS DateTimeEST,
+            COALESCE(w.CpuAvg,     0) AS CpuAvg,
+            COALESCE(p.CpuAvgP95,  0) AS CpuAvgP95
+    INTO #CpuAvg
+    FROM Win w
+    JOIN P95Avg p ON p.[key] = w.[key] AND p.HourBucket = w.HourBucket
+    WHERE w.rn = 1;
 
     -- =========================================
     -- 2. CPU MAX + P95 + Gt50/25/10
@@ -90,29 +98,38 @@ BEGIN
         FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_Max_5M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
+    -- P95 as ordered-set aggregate (Synapse compatible - no OVER clause)
+    P95 AS (
+        SELECT [key], HourBucket,
+               PERCENTILE_CONT(0.95)
+                   WITHIN GROUP (ORDER BY Measurement) AS CpuMaxP95
+        FROM Raw
+        GROUP BY [key], HourBucket
+    ),
     Win AS (
         SELECT
-            [key], HourBucket,
-            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS CpuMax,
-            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY Measurement)
-                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxP95,
-            SUM(CASE WHEN Measurement > 50 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt50,
-            SUM(CASE WHEN Measurement > 25 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt25,
-            SUM(CASE WHEN Measurement > 10 THEN 1 ELSE 0 END)
-                OVER (PARTITION BY [key], HourBucket)              AS CpuMaxGt10,
-            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
-                               ORDER BY (SELECT 0))                AS rn
-        FROM Raw
+            r.[key], r.HourBucket,
+            MAX(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS CpuMax,
+            SUM(CASE WHEN r.Measurement > 50 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt50,
+            SUM(CASE WHEN r.Measurement > 25 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt25,
+            SUM(CASE WHEN r.Measurement > 10 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY r.[key], r.HourBucket)              AS CpuMaxGt10,
+            ROW_NUMBER() OVER (PARTITION BY r.[key], r.HourBucket
+                               ORDER BY (SELECT 0))                    AS rn
+        FROM Raw r
     )
-    SELECT [key], HourBucket AS DateTimeEST,
-           COALESCE(CpuMax,     0) AS CpuMax,
-           COALESCE(CpuMaxP95,  0) AS CpuMaxP95,
-           COALESCE(CpuMaxGt50, 0) AS CpuMaxGt50,
-           COALESCE(CpuMaxGt25, 0) AS CpuMaxGt25,
-           COALESCE(CpuMaxGt10, 0) AS CpuMaxGt10
-    INTO #CpuMax FROM Win WHERE rn = 1;
+    SELECT  w.[key], w.HourBucket AS DateTimeEST,
+            COALESCE(w.CpuMax,      0) AS CpuMax,
+            COALESCE(p.CpuMaxP95,   0) AS CpuMaxP95,
+            COALESCE(w.CpuMaxGt50,  0) AS CpuMaxGt50,
+            COALESCE(w.CpuMaxGt25,  0) AS CpuMaxGt25,
+            COALESCE(w.CpuMaxGt10,  0) AS CpuMaxGt10
+    INTO #CpuMax
+    FROM Win w
+    JOIN P95 p ON p.[key] = w.[key] AND p.HourBucket = w.HourBucket
+    WHERE w.rn = 1;
 
     -- =========================================
     -- TRUE CLUSTER P95 — CPU MAX
@@ -178,22 +195,30 @@ BEGIN
         FROM [Metrics].[MongoDB_Memory_Resident_5M]
         WHERE DateTime >= @StartDT AND DateTime < @EndDT
     ),
+    P95Mem AS (
+        SELECT [key], HourBucket,
+               PERCENTILE_CONT(0.95)
+                   WITHIN GROUP (ORDER BY Measurement) AS MemResidentP95
+        FROM Raw
+        GROUP BY [key], HourBucket
+    ),
     Win AS (
         SELECT
-            [key], HourBucket,
-            MAX(Measurement) OVER (PARTITION BY [key], HourBucket) AS MemResidentMax,
-            AVG(Measurement) OVER (PARTITION BY [key], HourBucket) AS MemResidentAvg,
-            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY Measurement)
-                OVER (PARTITION BY [key], HourBucket)              AS MemResidentP95,
-            ROW_NUMBER() OVER (PARTITION BY [key], HourBucket
-                               ORDER BY (SELECT 0))                AS rn
-        FROM Raw
+            r.[key], r.HourBucket,
+            MAX(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS MemResidentMax,
+            AVG(r.Measurement) OVER (PARTITION BY r.[key], r.HourBucket) AS MemResidentAvg,
+            ROW_NUMBER() OVER (PARTITION BY r.[key], r.HourBucket
+                               ORDER BY (SELECT 0))                      AS rn
+        FROM Raw r
     )
-    SELECT [key], HourBucket AS DateTimeEST,
-           COALESCE(MemResidentMax, 0) AS MemResidentMax,
-           COALESCE(MemResidentAvg, 0) AS MemResidentAvg,
-           COALESCE(MemResidentP95, 0) AS MemResidentP95
-    INTO #MemResident FROM Win WHERE rn = 1;
+    SELECT  w.[key], w.HourBucket AS DateTimeEST,
+            COALESCE(w.MemResidentMax, 0) AS MemResidentMax,
+            COALESCE(w.MemResidentAvg, 0) AS MemResidentAvg,
+            COALESCE(p.MemResidentP95, 0) AS MemResidentP95
+    INTO #MemResident
+    FROM Win w
+    JOIN P95Mem p ON p.[key] = w.[key] AND p.HourBucket = w.HourBucket
+    WHERE w.rn = 1;
 
     -- =========================================
     -- 4. MEMORY AVAILABLE
@@ -782,46 +807,4 @@ SELECT
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 WHERE ClusterKey = 330
 ORDER BY _date, _hour
-GO
--- -- Save current values before update
-SELECT
-    ClusterName,
-    _date,
-    _hour,
-    ROUND(CpuMaxP95,        2) AS CpuMaxP95_Current,
-    ROUND(CpuAvgP95,        2) AS CpuAvgP95_Current,
-    ROUND(MemResidentP95Pct,2) AS MemP95_Current,
-    ROUND(MemAvailableMin,  0) AS MemAvailableMin_Current
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'cdr-uat'      -- change cluster
-AND   _date       = '2026-05-22'   -- change date
-ORDER BY _hour
-GO
-
-
--- 1. Add new columns first
-ALTER TABLE [Metrics].[MongoDBRightsizingAggregated5Min]
-ADD MaxCpuProcessId NVARCHAR(500) NULL,
-    MaxMemProcessId NVARCHAR(500) NULL
-GO
-
--- 2. Run v4 proc
-EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
-GO
-
--- Compare new values vs old
-SELECT
-    ClusterName,
-    _date,
-    _hour,
-    ROUND(CpuMaxP95,        2) AS CpuMaxP95_New,
-    ROUND(CpuAvgP95,        2) AS CpuAvgP95_New,
-    ROUND(MemResidentP95Pct,2) AS MemP95_New,
-    ROUND(MemAvailableMin,  0) AS MemAvailableMin_New,
-    MaxCpuProcessId,
-    MaxMemProcessId
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'cdr-uat'      -- same cluster
-AND   _date       = '2026-05-22'   -- same date
-ORDER BY _hour
 GO
