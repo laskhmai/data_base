@@ -1,584 +1,909 @@
--- =============================================
--- MongoDB Rightsizing — Simulated Metrics + Efficiency
--- Schema  : Metrics
--- Project : MongoDB Rightsizing — COSD Team Humana
--- DevOps  : 9009227
--- =============================================
--- CONTAINS:
---   Part 1 → CREATE TABLE MongoDBRightsizingSimulatedMetrics
---   Part 2 → usp_MongoDBRightsizingSimulatedMetrics
---   Part 3 → usp_MongoDBRightsizingEfficiency
--- =============================================
+"""
+MongoDB Atlas Rightsizing Engine (5-Min Aggregated Metrics)
+===========================================================
+Uses [Metrics].[MongoDBRightsizingAggregated5Min] as source.
+Implements PostgreSQL-like pattern:
+- per-slice evaluation (weekday business / weekday non-business / weekend)
+- action labeling (L1/L2/L3)
+- weekly clustering
+- trend + seasonality
+- one recommendation per cluster
+"""
 
--- =============================================
--- PART 1 — CREATE SimulatedMetrics TABLE
--- =============================================
+import re
+import json
+import warnings
+from datetime import date, datetime, timedelta, timezone
 
-DROP TABLE IF EXISTS [Metrics].[MongoDBRightsizingSimulatedMetrics]
-GO
-
-CREATE TABLE [Metrics].[MongoDBRightsizingSimulatedMetrics]
-(
-    -- Identity
-    ClusterKey          INT            NULL,
-    ClusterName         NVARCHAR(255)  NULL,
-    CurrentSku          NVARCHAR(50)   NULL,
-    [Date]              DATE           NULL,
-    [Hour]              INT            NULL,
-    DayType             NVARCHAR(20)   NULL,
-    HourType            NVARCHAR(30)   NULL,
-
-    -- Raw current metrics
-    CpuAvg              FLOAT          NULL,
-    CpuMax              FLOAT          NULL,
-    CpuAvgP95           FLOAT          NULL,
-    CpuMaxP95           FLOAT          NULL,
-    MemAvg              FLOAT          NULL,
-    MemMax              FLOAT          NULL,
-    MemAvgP95           FLOAT          NULL,
-    MemMaxP95           FLOAT          NULL,
-    ConnAvg             FLOAT          NULL,
-    ConnMax             FLOAT          NULL,
-
-    -- Recommendation SKUs
-    RecommendedSku      NVARCHAR(100)  NULL,   -- e.g. "M50, M50-low-CPU"
-    LowCpuSku           NVARCHAR(50)   NULL,   -- e.g. "M50-low-CPU"
-
-    -- Within family projections (Standard SKU)
-    nCpuAvgWithin       FLOAT          NULL,
-    nCpuMaxWithin       FLOAT          NULL,
-    nCpuAvgP95Within    FLOAT          NULL,
-    nCpuMaxP95Within    FLOAT          NULL,
-    nMemAvgWithin       FLOAT          NULL,
-    nMemMaxWithin       FLOAT          NULL,
-    nMemAvgP95Within    FLOAT          NULL,
-    nMemMaxP95Within    FLOAT          NULL,
-    nConnAvgWithin      FLOAT          NULL,
-    nConnMaxWithin      FLOAT          NULL,
-
-    -- Low-CPU projections
-    nCpuAvgLowCpu       FLOAT          NULL,
-    nCpuMaxLowCpu       FLOAT          NULL,
-    nCpuAvgP95LowCpu    FLOAT          NULL,
-    nCpuMaxP95LowCpu    FLOAT          NULL,
-    nMemAvgLowCpu       FLOAT          NULL,
-    nMemMaxLowCpu       FLOAT          NULL,
-    nMemAvgP95LowCpu    FLOAT          NULL,
-    nMemMaxP95LowCpu    FLOAT          NULL,
-    nConnAvgLowCpu      FLOAT          NULL,
-    nConnMaxLowCpu      FLOAT          NULL
-)
-WITH (HEAP)
-GO
+import numpy as np
+import pandas as pd
+import pyodbc
+from dateutil.relativedelta import relativedelta
+from sklearn.cluster import KMeans
 
 
--- =============================================
--- PART 2 — usp_MongoDBRightsizingSimulatedMetrics
--- Reads aggregated table + recommendations
--- Calculates projected metrics for Standard + Low-CPU SKUs
--- UPSERTS into MongoDBRightsizingSimulatedMetrics
--- Pattern: Postgres usp_PostgreSQLRightsizingSimulatedMetrics
--- =============================================
-
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-
-CREATE OR ALTER PROC [Metrics].[usp_MongoDBRightsizingSimulatedMetrics]
-    @LastMonth CHAR(7)
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-    -- =========================================
-    -- Drop temp tables
-    -- =========================================
-    IF OBJECT_ID('tempdb..#SkuConfig')       IS NOT NULL DROP TABLE #SkuConfig;
-    IF OBJECT_ID('tempdb..#Recommendations') IS NOT NULL DROP TABLE #Recommendations;
-    IF OBJECT_ID('tempdb..#Simulated')       IS NOT NULL DROP TABLE #Simulated;
-
-    -- =========================================
-    -- Load MetaConfig (vCores, RAM_GB, ConnectionLimit per SKU)
-    -- =========================================
-    SELECT
-        Instance            AS Sku,
-        CAST(vCores         AS FLOAT) AS vCores,
-        CAST(MemorySizeGB   AS FLOAT) AS RAM_GB,
-        CAST(ConnectionLimit AS FLOAT) AS ConnectionLimit
-    INTO #SkuConfig
-    FROM [Analytics].[MongoDBMetaConfig]
-    WHERE Tier NOT IN ('Free', 'Flex');
-
-    -- =========================================
-    -- Load recommendations for this month
-    -- =========================================
-    SELECT *
-    INTO #Recommendations
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE Month = @LastMonth;
-
-    -- =========================================
-    -- Calculate simulated metrics
-    -- Formula (Postgres pattern):
-    --   nCpuWithin = CpuAvg × (currentVCores / withinVCores)
-    --   nMemWithin = MemAvg × (currentRAM   / withinRAM)
-    --   nConnWithin= ConnAvg× (currentConn  / withinConn)
-    -- Same for Low-CPU alternative
-    -- =========================================
-    SELECT
-        a.ClusterKey,
-        a.ClusterName,
-        a.InstanceSize                                      AS CurrentSku,
-        a._date                                             AS [Date],
-        a._hour                                             AS [Hour],
-        a.[type]                                            AS DayType,
-        CASE WHEN a.[type] = 'Weekend'
-             THEN 'Weekend'
-             ELSE a.businessHour END                        AS HourType,
-
-        -- Raw current metrics
-        a.CpuAvg,
-        a.CpuMax,
-        a.CpuAvgP95,
-        a.CpuMaxP95,
-        a.MemResidentAvgPct                                 AS MemAvg,
-        a.MemResidentMaxPct                                 AS MemMax,
-        a.MemResidentP95Pct                                 AS MemAvgP95,
-        a.MemResidentP95Pct                                 AS MemMaxP95,
-        a.ConnUtilizationPct                                AS ConnAvg,
-        a.ConnUtilizationPct                                AS ConnMax,
-
-        -- Recommendation SKUs
-        r.RecommendedSku,
-        r.LowCpuSku,
-
-        -- Within family (Standard) projections
-        CASE WHEN wf.vCores          > 0
-             THEN a.CpuAvg           * cs.vCores          / wf.vCores          ELSE NULL END AS nCpuAvgWithin,
-        CASE WHEN wf.vCores          > 0
-             THEN a.CpuMax           * cs.vCores          / wf.vCores          ELSE NULL END AS nCpuMaxWithin,
-        CASE WHEN wf.vCores          > 0
-             THEN a.CpuAvgP95        * cs.vCores          / wf.vCores          ELSE NULL END AS nCpuAvgP95Within,
-        CASE WHEN wf.vCores          > 0
-             THEN a.CpuMaxP95        * cs.vCores          / wf.vCores          ELSE NULL END AS nCpuMaxP95Within,
-        CASE WHEN wf.RAM_GB          > 0
-             THEN a.MemResidentAvgPct* cs.RAM_GB          / wf.RAM_GB          ELSE NULL END AS nMemAvgWithin,
-        CASE WHEN wf.RAM_GB          > 0
-             THEN a.MemResidentMaxPct* cs.RAM_GB          / wf.RAM_GB          ELSE NULL END AS nMemMaxWithin,
-        CASE WHEN wf.RAM_GB          > 0
-             THEN a.MemResidentP95Pct* cs.RAM_GB          / wf.RAM_GB          ELSE NULL END AS nMemAvgP95Within,
-        CASE WHEN wf.RAM_GB          > 0
-             THEN a.MemResidentP95Pct* cs.RAM_GB          / wf.RAM_GB          ELSE NULL END AS nMemMaxP95Within,
-        CASE WHEN wf.ConnectionLimit > 0
-             THEN a.ConnUtilizationPct * cs.ConnectionLimit / wf.ConnectionLimit ELSE NULL END AS nConnAvgWithin,
-        CASE WHEN wf.ConnectionLimit > 0
-             THEN a.ConnUtilizationPct * cs.ConnectionLimit / wf.ConnectionLimit ELSE NULL END AS nConnMaxWithin,
-
-        -- Low-CPU projections
-        CASE WHEN lc.vCores          > 0
-             THEN a.CpuAvg           * cs.vCores          / lc.vCores          ELSE NULL END AS nCpuAvgLowCpu,
-        CASE WHEN lc.vCores          > 0
-             THEN a.CpuMax           * cs.vCores          / lc.vCores          ELSE NULL END AS nCpuMaxLowCpu,
-        CASE WHEN lc.vCores          > 0
-             THEN a.CpuAvgP95        * cs.vCores          / lc.vCores          ELSE NULL END AS nCpuAvgP95LowCpu,
-        CASE WHEN lc.vCores          > 0
-             THEN a.CpuMaxP95        * cs.vCores          / lc.vCores          ELSE NULL END AS nCpuMaxP95LowCpu,
-        CASE WHEN lc.RAM_GB          > 0
-             THEN a.MemResidentAvgPct* cs.RAM_GB          / lc.RAM_GB          ELSE NULL END AS nMemAvgLowCpu,
-        CASE WHEN lc.RAM_GB          > 0
-             THEN a.MemResidentMaxPct* cs.RAM_GB          / lc.RAM_GB          ELSE NULL END AS nMemMaxLowCpu,
-        CASE WHEN lc.RAM_GB          > 0
-             THEN a.MemResidentP95Pct* cs.RAM_GB          / lc.RAM_GB          ELSE NULL END AS nMemAvgP95LowCpu,
-        CASE WHEN lc.RAM_GB          > 0
-             THEN a.MemResidentP95Pct* cs.RAM_GB          / lc.RAM_GB          ELSE NULL END AS nMemMaxP95LowCpu,
-        CASE WHEN lc.ConnectionLimit > 0
-             THEN a.ConnUtilizationPct * cs.ConnectionLimit / lc.ConnectionLimit ELSE NULL END AS nConnAvgLowCpu,
-        CASE WHEN lc.ConnectionLimit > 0
-             THEN a.ConnUtilizationPct * cs.ConnectionLimit / lc.ConnectionLimit ELSE NULL END AS nConnMaxLowCpu
-
-    INTO #Simulated
-    FROM  [Metrics].[MongoDBRightsizingAggregated5Min] a
-    INNER JOIN #Recommendations r
-        ON  r.ClusterKey = a.ClusterKey
-        AND r.DayType    = a.[type]
-        AND (   a.[type]       = 'Weekend'
-             OR r.HourType     = a.businessHour)
-    INNER JOIN #SkuConfig cs
-        ON  cs.Sku = a.InstanceSize
-    LEFT  JOIN #SkuConfig wf
-        ON  LEFT(r.RecommendedSku,
-                 CHARINDEX(',', r.RecommendedSku + ',') - 1) = wf.Sku
-    LEFT  JOIN #SkuConfig lc
-        ON  r.LowCpuSku = lc.Sku
-    WHERE FORMAT(a._date, 'yyyy-MM') = @LastMonth;
-
-    -- =========================================
-    -- UPSERT — UPDATE existing rows
-    -- =========================================
-    UPDATE T
-    SET
-        T.CpuAvg           = S.CpuAvg,
-        T.CpuMax           = S.CpuMax,
-        T.CpuAvgP95        = S.CpuAvgP95,
-        T.CpuMaxP95        = S.CpuMaxP95,
-        T.MemAvg           = S.MemAvg,
-        T.MemMax           = S.MemMax,
-        T.MemAvgP95        = S.MemAvgP95,
-        T.MemMaxP95        = S.MemMaxP95,
-        T.ConnAvg          = S.ConnAvg,
-        T.ConnMax          = S.ConnMax,
-        T.RecommendedSku   = S.RecommendedSku,
-        T.LowCpuSku        = S.LowCpuSku,
-        T.nCpuAvgWithin    = S.nCpuAvgWithin,
-        T.nCpuMaxWithin    = S.nCpuMaxWithin,
-        T.nCpuAvgP95Within = S.nCpuAvgP95Within,
-        T.nCpuMaxP95Within = S.nCpuMaxP95Within,
-        T.nMemAvgWithin    = S.nMemAvgWithin,
-        T.nMemMaxWithin    = S.nMemMaxWithin,
-        T.nMemAvgP95Within = S.nMemAvgP95Within,
-        T.nMemMaxP95Within = S.nMemMaxP95Within,
-        T.nConnAvgWithin   = S.nConnAvgWithin,
-        T.nConnMaxWithin   = S.nConnMaxWithin,
-        T.nCpuAvgLowCpu    = S.nCpuAvgLowCpu,
-        T.nCpuMaxLowCpu    = S.nCpuMaxLowCpu,
-        T.nCpuAvgP95LowCpu = S.nCpuAvgP95LowCpu,
-        T.nCpuMaxP95LowCpu = S.nCpuMaxP95LowCpu,
-        T.nMemAvgLowCpu    = S.nMemAvgLowCpu,
-        T.nMemMaxLowCpu    = S.nMemMaxLowCpu,
-        T.nMemAvgP95LowCpu = S.nMemAvgP95LowCpu,
-        T.nMemMaxP95LowCpu = S.nMemMaxP95LowCpu,
-        T.nConnAvgLowCpu   = S.nConnAvgLowCpu,
-        T.nConnMaxLowCpu   = S.nConnMaxLowCpu
-    FROM [Metrics].[MongoDBRightsizingSimulatedMetrics] T
-    JOIN #Simulated S
-        ON  T.ClusterKey = S.ClusterKey
-        AND T.[Date]     = S.[Date]
-        AND T.[Hour]     = S.[Hour]
-        AND T.DayType    = S.DayType
-        AND T.HourType   = S.HourType
-        AND T.CurrentSku = S.CurrentSku;
-
-    -- =========================================
-    -- UPSERT — INSERT new rows
-    -- =========================================
-    INSERT INTO [Metrics].[MongoDBRightsizingSimulatedMetrics]
-    (
-        ClusterKey, ClusterName, CurrentSku,
-        [Date], [Hour], DayType, HourType,
-        CpuAvg, CpuMax, CpuAvgP95, CpuMaxP95,
-        MemAvg, MemMax, MemAvgP95, MemMaxP95,
-        ConnAvg, ConnMax,
-        RecommendedSku, LowCpuSku,
-        nCpuAvgWithin,    nCpuMaxWithin,    nCpuAvgP95Within, nCpuMaxP95Within,
-        nMemAvgWithin,    nMemMaxWithin,     nMemAvgP95Within, nMemMaxP95Within,
-        nConnAvgWithin,   nConnMaxWithin,
-        nCpuAvgLowCpu,    nCpuMaxLowCpu,    nCpuAvgP95LowCpu, nCpuMaxP95LowCpu,
-        nMemAvgLowCpu,    nMemMaxLowCpu,     nMemAvgP95LowCpu, nMemMaxP95LowCpu,
-        nConnAvgLowCpu,   nConnMaxLowCpu
-    )
-    SELECT
-        S.ClusterKey, S.ClusterName, S.CurrentSku,
-        S.[Date], S.[Hour], S.DayType, S.HourType,
-        S.CpuAvg, S.CpuMax, S.CpuAvgP95, S.CpuMaxP95,
-        S.MemAvg, S.MemMax, S.MemAvgP95, S.MemMaxP95,
-        S.ConnAvg, S.ConnMax,
-        S.RecommendedSku, S.LowCpuSku,
-        S.nCpuAvgWithin,    S.nCpuMaxWithin,    S.nCpuAvgP95Within, S.nCpuMaxP95Within,
-        S.nMemAvgWithin,    S.nMemMaxWithin,     S.nMemAvgP95Within, S.nMemMaxP95Within,
-        S.nConnAvgWithin,   S.nConnMaxWithin,
-        S.nCpuAvgLowCpu,    S.nCpuMaxLowCpu,    S.nCpuAvgP95LowCpu, S.nCpuMaxP95LowCpu,
-        S.nMemAvgLowCpu,    S.nMemMaxLowCpu,     S.nMemAvgP95LowCpu, S.nMemMaxP95LowCpu,
-        S.nConnAvgLowCpu,   S.nConnMaxLowCpu
-    FROM #Simulated S
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM [Metrics].[MongoDBRightsizingSimulatedMetrics] T
-        WHERE T.ClusterKey = S.ClusterKey
-        AND   T.[Date]     = S.[Date]
-        AND   T.[Hour]     = S.[Hour]
-        AND   T.DayType    = S.DayType
-        AND   T.HourType   = S.HourType
-        AND   T.CurrentSku = S.CurrentSku
-    );
-
-END
-GO
+warnings.filterwarnings("ignore")
 
 
--- =============================================
--- PART 3 — usp_MongoDBRightsizingEfficiency
--- Reads SimulatedMetrics table
--- Calculates sigmoid-based efficiency scores
--- Aggregates AVG + P95 per cluster/daytype/hourtype
--- Creates JSON for CurrentEfficiency, WithinEfficiency, LowCpuEfficiency
--- UPDATES MongoDBRightsizingRecommendations table
--- Pattern: Postgres usp_PostgreSQLRightsizingEfficiency
--- NOTE: PERCENTILE_CONT OVER not supported in Synapse
---       Using ROW_NUMBER + CEILING(N x 0.95) instead
--- =============================================
+# ===========================================================================
+# 1. DATABASE CONNECTION
+# ===========================================================================
 
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
+SERVER = "hybridasa.sql.azuresynapse.net"
+DATABASE = "hybridasa_dedicatedpool"
+USERNAME = "hybridasawrite"
+PASSWORD = "H@Sh1CoRS!"
+DRIVER = "{ODBC Driver 17 for SQL Server}"
 
-CREATE OR ALTER PROC [Metrics].[usp_MongoDBRightsizingEfficiency]
-    @LastMonth CHAR(7)
-AS
-BEGIN
-    SET NOCOUNT ON;
 
-    IF OBJECT_ID('tempdb..#EffResult') IS NOT NULL DROP TABLE #EffResult;
+def connect_to_db():
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={DRIVER};"
+            f"SERVER={SERVER};"
+            f"DATABASE={DATABASE};"
+            f"UID={USERNAME};"
+            f"PWD={PASSWORD};"
+        )
+        return conn
+    except Exception as exc:
+        print(f"Error connecting to database: {exc}")
+        raise
 
-    -- =========================================
-    -- STEP 1 — Calculate efficiency per row
-    -- Sigmoid formula (Postgres pattern):
-    --   Efficiency = 0.02 + 0.98 × sigmoid(avg - 50) × stability
-    --   sigmoid(x) = 1 / (1 + EXP(-0.09 × x))
-    --   stability  = 0.5 + 0.5
-    --                × EXP(-0.05 × CASE WHEN max < 25 THEN 25 - max ELSE 0 END)
-    --                × (1 - MIN(ABS(avg - avgP95) / NULLIF(avgP95,0), 1))
-    --                × (1 - MIN(ABS(max - maxP95) / NULLIF(maxP95,0), 1))
-    -- =========================================
-    ;WITH EffBase AS (
+
+def fetch_data(sql_query: str) -> pd.DataFrame:
+    try:
+        print("[DEBUG] Executing SQL query:\n", sql_query)
+        conn = connect_to_db()
+        data = pd.read_sql(sql_query, conn)
+        print(f"[DEBUG] Query returned {data.shape[0]} rows and {data.shape[1]} columns.")
+        conn.close()
+        return data
+    except Exception as exc:
+        print(f"Error fetching data: {exc}")
+        return pd.DataFrame()
+
+
+# ===========================================================================
+# 2. HELPERS
+# ===========================================================================
+
+
+def _count(start_date: str, end_date: str) -> tuple[int, int]:
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    weekday_count = weekend_count = 0
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            weekday_count += 1
+        else:
+            weekend_count += 1
+        current += timedelta(days=1)
+    return weekday_count, weekend_count
+
+
+def _safe_quantile(series: pd.Series, q: float) -> float:
+    if series.empty:
+        return 0.0
+    return float(series.quantile(q))
+
+
+def _safe_mean(series: pd.Series) -> float:
+    if series.empty:
+        return 0.0
+    return float(series.mean())
+
+
+def _safe_max(series: pd.Series) -> float:
+    if series.empty:
+        return 0.0
+    return float(series.max())
+
+
+def _hours_in_range(start_date: str, end_date: str) -> int:
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    return ((end - start).days + 1) * 24
+
+
+def _action_label(current_sku: str, recommended_sku: str, ordered_tiers: list[str]) -> str:
+    current_idx = tier_index(current_sku, ordered_tiers)
+    recommended_idx = tier_index(recommended_sku, ordered_tiers)
+    if current_idx == -1 or recommended_idx == -1:
+        return "Unknown"
+    if recommended_idx < current_idx:
+        return "Downsize"
+    if recommended_idx > current_idx:
+        return "Upsize"
+    return "NoChange"
+
+
+# ===========================================================================
+# 3. METACONFIG (DYNAMIC TIERS)
+# ===========================================================================
+
+
+def load_metaconfig(provider: str, region: str) -> tuple[dict, list[str]]:
+    sql = f"""
         SELECT
-            FORMAT(CAST([Date] AS DATE), 'yyyy-MM') AS MonthName,
-            ClusterKey,
-            DayType,
-            HourType,
-            CurrentSku,
+            SkuName,
+            Tier,
+            vCores,
+            MemorySizeGB,
+            Instance,
+            CostPrHour,
+            Provider,
+            Region,
+            ConnectionLimit
+        FROM [Analytics].[MongoDBMetaConfig]
+        WHERE Provider = '{provider}'
+          AND Region = '{region}'
+          AND Tier NOT IN ('Free', 'Flex')
+    """
+    df = fetch_data(sql)
+    if df.empty:
+        return {}, []
 
-            -- Current CPU Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (CpuAvg - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN CpuMax < 25 THEN 25 - CpuMax ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(CpuAvgP95,0) IS NULL THEN 0
-                            WHEN ABS(CpuAvg - CpuAvgP95) / CpuAvgP95 > 1 THEN 1
-                            ELSE ABS(CpuAvg - CpuAvgP95) / CpuAvgP95 END)
-                * (1 - CASE WHEN NULLIF(CpuMaxP95,0) IS NULL THEN 0
-                            WHEN ABS(CpuMax - CpuMaxP95) / CpuMaxP95 > 1 THEN 1
-                            ELSE ABS(CpuMax - CpuMaxP95) / CpuMaxP95 END)
-            )                                           AS CpuEffCurrent,
+    # Keep a single best row per SkuName (prefer non-null connection limit, lower cost)
+    df["ConnectionLimit"] = pd.to_numeric(df["ConnectionLimit"], errors="coerce")
+    df["CostPrHour"] = pd.to_numeric(df["CostPrHour"], errors="coerce")
+    df["MemorySizeGB"] = pd.to_numeric(df["MemorySizeGB"], errors="coerce")
+    df["vCores"] = pd.to_numeric(df["vCores"], errors="coerce")
 
-            -- Current Memory Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (MemAvg - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN MemMax < 25 THEN 25 - MemMax ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(MemAvgP95,0) IS NULL THEN 0
-                            WHEN ABS(MemAvg - MemAvgP95) / MemAvgP95 > 1 THEN 1
-                            ELSE ABS(MemAvg - MemAvgP95) / MemAvgP95 END)
-                * (1 - CASE WHEN NULLIF(MemMaxP95,0) IS NULL THEN 0
-                            WHEN ABS(MemMax - MemMaxP95) / MemMaxP95 > 1 THEN 1
-                            ELSE ABS(MemMax - MemMaxP95) / MemMaxP95 END)
-            )                                           AS MemEffCurrent,
+    df = df.sort_values(by=["SkuName", "ConnectionLimit", "CostPrHour"], ascending=[True, False, True])
+    df = df.drop_duplicates(subset=["SkuName"], keep="first")
 
-            -- Within Family CPU Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (COALESCE(nCpuAvgWithin,0) - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN COALESCE(nCpuMaxWithin,0) < 25 THEN 25 - COALESCE(nCpuMaxWithin,0) ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(nCpuAvgP95Within,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nCpuAvgWithin,0) - COALESCE(nCpuAvgP95Within,0)) / nCpuAvgP95Within > 1 THEN 1
-                            ELSE ABS(COALESCE(nCpuAvgWithin,0) - COALESCE(nCpuAvgP95Within,0)) / nCpuAvgP95Within END)
-                * (1 - CASE WHEN NULLIF(nCpuMaxP95Within,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nCpuMaxWithin,0) - COALESCE(nCpuMaxP95Within,0)) / nCpuMaxP95Within > 1 THEN 1
-                            ELSE ABS(COALESCE(nCpuMaxWithin,0) - COALESCE(nCpuMaxP95Within,0)) / nCpuMaxP95Within END)
-            )                                           AS CpuEffWithin,
+    specs = {}
+    for _, row in df.iterrows():
+        sku = str(row["SkuName"]).upper()
+        specs[sku] = {
+            "RAM_GB": float(row["MemorySizeGB"]) if pd.notna(row["MemorySizeGB"]) else 0.0,
+            "vCPUs": float(row["vCores"]) if pd.notna(row["vCores"]) else 0.0,
+            "ConnectionLimit": float(row["ConnectionLimit"]) if pd.notna(row["ConnectionLimit"]) else 0.0,
+            "CostPrHour": float(row["CostPrHour"]) if pd.notna(row["CostPrHour"]) else 0.0,
+        }
 
-            -- Within Family Memory Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (COALESCE(nMemAvgWithin,0) - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN COALESCE(nMemMaxWithin,0) < 25 THEN 25 - COALESCE(nMemMaxWithin,0) ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(nMemAvgP95Within,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nMemAvgWithin,0) - COALESCE(nMemAvgP95Within,0)) / nMemAvgP95Within > 1 THEN 1
-                            ELSE ABS(COALESCE(nMemAvgWithin,0) - COALESCE(nMemAvgP95Within,0)) / nMemAvgP95Within END)
-                * (1 - CASE WHEN NULLIF(nMemMaxP95Within,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nMemMaxWithin,0) - COALESCE(nMemMaxP95Within,0)) / nMemMaxP95Within > 1 THEN 1
-                            ELSE ABS(COALESCE(nMemMaxWithin,0) - COALESCE(nMemMaxP95Within,0)) / nMemMaxP95Within END)
-            )                                           AS MemEffWithin,
+    # Tier order: primarily RAM, then vCPU
+    ordered = sorted(
+        list(specs.keys()),
+        key=lambda sku: (specs[sku]["RAM_GB"], specs[sku]["vCPUs"]) 
+    )
+    return specs, ordered
 
-            -- Low-CPU CPU Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (COALESCE(nCpuAvgLowCpu,0) - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN COALESCE(nCpuMaxLowCpu,0) < 25 THEN 25 - COALESCE(nCpuMaxLowCpu,0) ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(nCpuAvgP95LowCpu,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nCpuAvgLowCpu,0) - COALESCE(nCpuAvgP95LowCpu,0)) / nCpuAvgP95LowCpu > 1 THEN 1
-                            ELSE ABS(COALESCE(nCpuAvgLowCpu,0) - COALESCE(nCpuAvgP95LowCpu,0)) / nCpuAvgP95LowCpu END)
-                * (1 - CASE WHEN NULLIF(nCpuMaxP95LowCpu,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nCpuMaxLowCpu,0) - COALESCE(nCpuMaxP95LowCpu,0)) / nCpuMaxP95LowCpu > 1 THEN 1
-                            ELSE ABS(COALESCE(nCpuMaxLowCpu,0) - COALESCE(nCpuMaxP95LowCpu,0)) / nCpuMaxP95LowCpu END)
-            )                                           AS CpuEffLowCpu,
 
-            -- Low-CPU Memory Efficiency
-            0.02 + (1.0 - 0.02) * (
-                1.0 / (1.0 + EXP(-0.09 * (COALESCE(nMemAvgLowCpu,0) - 50)))
-            ) * (
-                0.5 + 0.5
-                * EXP(-0.05 * CASE WHEN COALESCE(nMemMaxLowCpu,0) < 25 THEN 25 - COALESCE(nMemMaxLowCpu,0) ELSE 0 END)
-                * (1 - CASE WHEN NULLIF(nMemAvgP95LowCpu,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nMemAvgLowCpu,0) - COALESCE(nMemAvgP95LowCpu,0)) / nMemAvgP95LowCpu > 1 THEN 1
-                            ELSE ABS(COALESCE(nMemAvgLowCpu,0) - COALESCE(nMemAvgP95LowCpu,0)) / nMemAvgP95LowCpu END)
-                * (1 - CASE WHEN NULLIF(nMemMaxP95LowCpu,0) IS NULL THEN 0
-                            WHEN ABS(COALESCE(nMemMaxLowCpu,0) - COALESCE(nMemMaxP95LowCpu,0)) / nMemMaxP95LowCpu > 1 THEN 1
-                            ELSE ABS(COALESCE(nMemMaxLowCpu,0) - COALESCE(nMemMaxP95LowCpu,0)) / nMemMaxP95LowCpu END)
-            )                                           AS MemEffLowCpu
+def tier_index(sku: str, ordered_tiers: list[str]) -> int:
+    try:
+        return ordered_tiers.index(str(sku).upper())
+    except ValueError:
+        return -1
 
-        FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
-        WHERE FORMAT(CAST([Date] AS DATE), 'yyyy-MM') = @LastMonth
-    ),
 
-    -- =========================================
-    -- STEP 2 — Aggregate AVG per cluster/slice
-    -- =========================================
-    EffAgg AS (
+def find_low_cpu_sku(standard_sku: str, specs: dict, provider: str, region: str) -> str | None:
+    """Find the cheapest Low-CPU alternative with same RAM as standard_sku."""
+    rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
+    prov    = str(provider).upper()
+    reg     = str(region).upper()
+
+    low_cpu_skus = [
+        s for s in specs
+        if  specs[s].get("RAM_GB")    == rec_ram
+        and specs[s].get("Tier",  "").upper() == "LOW-CPU"
+        and specs[s].get("Provider", "").upper() == prov
+        and specs[s].get("Region",   "").upper() == reg
+    ]
+    if not low_cpu_skus:
+        return None
+    return min(low_cpu_skus, key=lambda s: specs[s].get("CostPrHour", 0.0))
+
+
+# ===========================================================================
+# 4. TREND + SEASONALITY
+# ===========================================================================
+
+
+def _trend(df: pd.DataFrame, feature: str) -> list[str]:
+    if df.empty or feature not in df.columns:
+        return ["No trend"]
+
+    weekly = df.resample("W").quantile(0.95)
+    if len(weekly) < 2:
+        return ["No trend"]
+
+    trend_status = []
+    for i in range(len(weekly) - 1):
+        pair = weekly.iloc[i : i + 2][feature].fillna(0)
+        y = pair.values
+        x = np.arange(len(y))
+        if len(y) < 2 or np.all(np.isnan(y)):
+            trend_status.append("No trend")
+            continue
+        # Simple linear regression slope
+        slope = np.polyfit(x, y, 1)[0]
+        if slope > 0:
+            trend_status.append("Increasing")
+        elif slope < 0:
+            trend_status.append("Decreasing")
+        else:
+            trend_status.append("No trend")
+    return trend_status
+
+
+def _build_hour_range(date_range: pd.DatetimeIndex, hr_type: str, business_hour: str, on_start: int, off_end: int) -> pd.DatetimeIndex:
+    if hr_type == "Weekday" and business_hour == "BusinessHours":
+        return date_range[(date_range.weekday < 5) & (date_range.hour >= on_start) & (date_range.hour <= off_end)]
+    if hr_type == "Weekday" and business_hour == "NonBusinessHours":
+        return date_range[(date_range.weekday < 5) & ((date_range.hour < on_start) | (date_range.hour > off_end))]
+    return date_range[date_range.weekday >= 5]
+
+
+def _onseasonality(seasonality: pd.DataFrame, start_date: str, end_date: str, sku: str, hr_type: str, business_hour: str, on_start: int, off_end: int) -> str:
+    x = seasonality.groupby(["Date", "Hour", "Action"]).size().reset_index(name="_count")
+    x["_datetime"] = pd.to_datetime(x["Date"]) + pd.to_timedelta(x["Hour"], unit="h")
+    if x[x["Action"] == sku].empty:
+        return "Empty"
+
+    date_range = pd.date_range(start=start_date, end=f"{end_date} 23:59:00", freq="h")
+    hrs_range = _build_hour_range(date_range, hr_type, business_hour, on_start, off_end)
+
+    df_l1 = x[x["Action"] == sku].set_index("_datetime").reindex(hrs_range, fill_value=0).reset_index()
+    df_l1.columns = ["_datetime", "Date", "Hour", "Action", "_count"]
+    df_l1 = df_l1[["_datetime", "_count"]].set_index("_datetime")
+
+    hourly = int((df_l1.groupby(df_l1.index.hour).quantile(0.9)["_count"] >= 1).any())
+    daily = int((df_l1.groupby(df_l1.index.date).quantile(0.9)["_count"].sum() > 1))
+
+    if hourly and daily:
+        return "Seasonality : Hourly,Daily"
+    if hourly:
+        return "Seasonality : Hourly"
+    if daily:
+        return "Seasonality : Daily"
+    return "No Seasonality : Daily or Hourly"
+
+
+# ===========================================================================
+# 5. CLUSTERING
+# ===========================================================================
+
+
+def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> pd.DataFrame:
+    df = data.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Week"] = df["Date"].dt.isocalendar().week
+
+    mt = metric_type
+    result = []
+
+    for week, group in df.groupby("Week"):
+        if len(group) < 3:
+            continue
+
+        level2 = group[[f"{mt}MaxP95", f"{mt}Max", f"{mt}AvgP95"]].mul(4)
+        level2.columns = [f"{mt}MaxP952level", f"{mt}Max2level", f"{mt}AvgP952level"]
+        k2 = KMeans(n_clusters=3, random_state=42)
+        level2["Cluster"] = k2.fit_predict(level2)
+        c2 = level2.groupby("Cluster").quantile(0.95).reset_index()
+        c2["Week"] = week
+
+        level1 = group[[f"{mt}MaxP95", f"{mt}AvgP95"]].mul(2)
+        level1.columns = [f"{mt}MaxP951level", f"{mt}AvgP951level"]
+        k1 = KMeans(n_clusters=3, random_state=42)
+        level1["Cluster"] = k1.fit_predict(level1)
+        c1 = level1.groupby("Cluster").quantile(0.95).reset_index()
+        c1["Week"] = week
+
+        merged = pd.merge(c1, c2, on=["Cluster", "Week"])
+        result.append(merged)
+
+    if not result:
+        return pd.DataFrame(columns=["Week", "Action1"])
+
+    final_df = pd.concat(result, ignore_index=True)
+
+    def assign_cluster(row: pd.Series) -> int:
+        c2_ok = (
+            row.get(f"{mt}MaxP952level", 101) < 100
+            and row.get(f"{mt}Max2level", 101) < 100
+            and row.get(f"{mt}AvgP952level", 101) < 100
+        )
+        c1_ok = (
+            row.get(f"{mt}MaxP951level", 101) < 100
+            and row.get(f"{mt}AvgP951level", 101) < 100
+        )
+        if c2_ok:
+            return 1
+        if c1_ok:
+            return 2
+        return 3
+
+    final_df["Action1"] = final_df.apply(assign_cluster, axis=1)
+    return final_df
+
+
+# ===========================================================================
+# 6. RECOMMENDATIONS
+# ===========================================================================
+
+
+def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, ordered_tiers: list[str]) -> list | None:
+    if data.empty:
+        return None
+
+    mt = metric_type
+    df = data.copy()
+
+    # MongoDB thresholds (aligned to new 5-min proc outputs)
+    # For CPU: uses CpuMaxGt50 / CpuMaxGt25
+    # For Memory: derive from MemResidentMaxPct when explicit counters do not exist
+    if mt == "Mem":
+        if "MemMaxGt50" not in df.columns:
+            df["MemMaxGt50"] = (df["MemResidentMaxPct"] > 50).astype(int)
+        if "MemMaxGt25" not in df.columns:
+            df["MemMaxGt25"] = (df["MemResidentMaxPct"] > 25).astype(int)
+        df["MemMax"] = df["MemResidentMaxPct"]
+        df["MemMaxP95"] = df.get("MemResidentP95Pct", df["MemResidentMaxPct"])
+        df["MemAvgP95"] = df.get("MemResidentAvgPct", df["MemResidentMaxPct"])
+
+    gt50 = f"{mt}MaxGt50"
+    gt25 = f"{mt}MaxGt25"
+
+    for col in [gt50, gt25]:
+        if col not in df.columns:
+            df[col] = 0
+
+    df.loc[
+        (df[f"{mt}MaxP95"] <= 25)
+        & (df[f"{mt}AvgP95"] <= 25)
+        & (df[gt50] == 0)
+        & (df[gt25] == 0)
+        & (df["InstanceSize"] == actual_sku),
+        "Action",
+    ] = "L1"
+
+    df.loc[
+        (df[f"{mt}MaxP95"] > 50)
+        & ((df[gt50] >= 1) | (df[gt25] > 2))
+        & (df["InstanceSize"] == actual_sku),
+        "Action",
+    ] = "L3"
+
+    df.loc[df["InstanceSize"] != actual_sku, "Action"] = "L3"
+    df["Action"] = df["Action"].fillna("L2")
+
+    weekly = perform_clustering_and_rightsizing(mt, df)
+    if weekly.empty:
+        return [(actual_sku, 0, "Insufficient data for clustering")]
+
+    trend_df = df.copy()
+    trend_df["_datetime"] = pd.to_datetime(trend_df["Date"].astype(str) + " " + trend_df["Hour"].astype(str) + ":00:00")
+    trend_df.set_index("_datetime", inplace=True)
+    trend_status = _trend(trend_df[[f"{mt}MaxP95", f"{mt}AvgP95", gt50]], gt50)
+
+    current_idx = tier_index(actual_sku, ordered_tiers)
+    if current_idx == -1:
+        return [(actual_sku, 0, "Unknown tier")]
+
+    weekly_actions = []
+    # Peak value — distinguish genuine high load vs tiny increasing trend.
+    # Use the 95th percentile, NOT max(): a single transient spike (backup,
+    # index build, restart) must not push a genuinely idle cluster to Upsize.
+    peak_val = _safe_quantile(df[f"{mt}MaxP95"], 0.95) if f"{mt}MaxP95" in df.columns else 0.0
+
+    for i, (_, row) in enumerate(weekly.iterrows()):
+        a1 = int(row["Action1"])
+        ts = trend_status[i - 1] if i > 0 and i - 1 < len(trend_status) else "No trend"
+
+        if ts == "Increasing" or a1 == 3:
+            if peak_val > 50:
+                # Fix 1: Genuinely high load -> scale UP one tier
+                target_idx = min(len(ordered_tiers) - 1, current_idx + 1)
+            else:
+                # Small trend on tiny values -> stay current
+                target_idx = current_idx
+            status = 3
+        elif a1 == 1:
+            target_idx = max(0, current_idx - 2)
+            status = 1
+        else:
+            target_idx = max(0, current_idx - 1)
+            status = 2
+
+        weekly_actions.append((status, ordered_tiers[target_idx]))
+
+    # Fix 2: Only treat status=3 as ScaleUp when peak is genuinely high
+    if any(s == 3 for s, _ in weekly_actions) and peak_val > 50:
+        final_idx = min(len(ordered_tiers) - 1, current_idx + 1)
+    elif all(s == 1 for s, _ in weekly_actions):
+        final_idx = max(0, current_idx - 2)
+    else:
+        final_idx = max(0, current_idx - 1)
+
+    final_sku = ordered_tiers[final_idx]
+    return [(final_sku, final_idx, "")]
+
+
+def connections_recommendation(data: pd.DataFrame, actual_sku: str, ordered_tiers: list[str], specs: dict) -> tuple[str, str]:
+    if data.empty:
+        return actual_sku, ""
+
+    max_conn_pct = _safe_quantile(data["ConnUtilizationPct"], 0.95) if "ConnUtilizationPct" in data.columns else 0.0
+    current_idx = tier_index(actual_sku, ordered_tiers)
+    if current_idx == -1:
+        return actual_sku, ""
+
+    if max_conn_pct < 35:
+        return ordered_tiers[max(0, current_idx - 1)], "Connections underutilized"
+    if max_conn_pct > 80:
+        return ordered_tiers[min(len(ordered_tiers) - 1, current_idx + 1)], "Connections intensive"
+    return actual_sku, ""
+
+
+def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: int) -> str:
+    components = {"CPU": cpu_idx, "Memory": mem_idx, "Connections": conn_idx}
+    max_val = max(components.values())
+
+    intensive, underutilized, optimal = [], [], []
+    for name, val in components.items():
+        if val == current_idx:
+            optimal.append(name)
+        elif val < current_idx and val < max_val:
+            underutilized.append(name)
+        elif val == max_val:
+            intensive.append(name)
+
+    parts = []
+    if intensive:
+        parts.append(", ".join(intensive) + " Intensive")
+    if underutilized:
+        parts.append(", ".join(underutilized) + " Underutilized")
+    if optimal:
+        parts.append(", ".join(optimal) + " Optimal Usage")
+    return " ; ".join(parts)
+
+
+# ===========================================================================
+# 7. SQL BUILDERS (NEW 5-MIN TABLE)
+# ===========================================================================
+
+
+def build_cluster_inventory_query(start_date: str, end_date: str) -> str:
+    return f"""
         SELECT DISTINCT
-            MonthName,
-            ClusterKey,
-            DayType,
-            HourType,
-            CurrentSku,
+            metrics.ClusterKey,
+            metrics.ClusterName,
+            metrics.InstanceSize,
+            metrics.ProviderName,
+            metrics.RegionName,
+            metrics.OrgKey,
+            CAST(metrics.OrgKey AS NVARCHAR(255)) AS OrgName,
+            metrics.ProjectKey
+        FROM [Metrics].[MongoDBRightsizingAggregated5Min] metrics
+        WHERE metrics._date BETWEEN '{start_date}' AND '{end_date}'
+          AND InstanceSize IS NOT NULL
+    """
 
-            -- AVG efficiency scores
-            AVG(CpuEffCurrent) OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgCpuCurrent,
-            AVG(MemEffCurrent) OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgMemCurrent,
-            AVG(CpuEffWithin)  OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgCpuWithin,
-            AVG(MemEffWithin)  OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgMemWithin,
-            AVG(CpuEffLowCpu)  OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgCpuLowCpu,
-            AVG(MemEffLowCpu)  OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku) AS AvgMemLowCpu,
 
-            -- ROW_NUMBER for P95 calculation (Synapse compatible — no PERCENTILE_CONT OVER)
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY CpuEffCurrent ASC) AS RnCpuCurrent,
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY MemEffCurrent ASC) AS RnMemCurrent,
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY CpuEffWithin  ASC) AS RnCpuWithin,
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY MemEffWithin  ASC) AS RnMemWithin,
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY CpuEffLowCpu  ASC) AS RnCpuLowCpu,
-            ROW_NUMBER() OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku ORDER BY MemEffLowCpu  ASC) AS RnMemLowCpu,
-            COUNT(*)     OVER (PARTITION BY MonthName, ClusterKey, DayType, HourType, CurrentSku)                             AS Cnt,
-
-            -- Raw values for P95 selection
-            CpuEffCurrent, MemEffCurrent,
-            CpuEffWithin,  MemEffWithin,
-            CpuEffLowCpu,  MemEffLowCpu
-        FROM EffBase
-    ),
-
-    -- =========================================
-    -- STEP 3 — Select P95 values per cluster/slice
-    -- =========================================
-    EffP95 AS (
+def build_cluster_metrics_query(cluster_key: int, start_date: str, end_date: str, day_type: str, business_hour: str, business_hour1: str) -> str:
+    return f"""
         SELECT
-            MonthName, ClusterKey, DayType, HourType, CurrentSku,
-            MAX(AvgCpuCurrent) AS AvgCpuCurrent,
-            MAX(AvgMemCurrent) AS AvgMemCurrent,
-            MAX(AvgCpuWithin)  AS AvgCpuWithin,
-            MAX(AvgMemWithin)  AS AvgMemWithin,
-            MAX(AvgCpuLowCpu)  AS AvgCpuLowCpu,
-            MAX(AvgMemLowCpu)  AS AvgMemLowCpu,
-            MAX(CASE WHEN RnCpuCurrent = CAST(CEILING(Cnt * 0.95) AS INT) THEN CpuEffCurrent END) AS P95CpuCurrent,
-            MAX(CASE WHEN RnMemCurrent = CAST(CEILING(Cnt * 0.95) AS INT) THEN MemEffCurrent END) AS P95MemCurrent,
-            MAX(CASE WHEN RnCpuWithin  = CAST(CEILING(Cnt * 0.95) AS INT) THEN CpuEffWithin  END) AS P95CpuWithin,
-            MAX(CASE WHEN RnMemWithin  = CAST(CEILING(Cnt * 0.95) AS INT) THEN MemEffWithin  END) AS P95MemWithin,
-            MAX(CASE WHEN RnCpuLowCpu  = CAST(CEILING(Cnt * 0.95) AS INT) THEN CpuEffLowCpu  END) AS P95CpuLowCpu,
-            MAX(CASE WHEN RnMemLowCpu  = CAST(CEILING(Cnt * 0.95) AS INT) THEN MemEffLowCpu  END) AS P95MemLowCpu
-        FROM EffAgg
-        GROUP BY MonthName, ClusterKey, DayType, HourType, CurrentSku
+            ClusterKey,
+            ClusterName,
+            InstanceSize,
+            ProviderName,
+            RegionName,
+            _date AS [Date],
+            _hour AS [Hour],
+            [type] AS [DayType],
+            CASE WHEN [type] = 'Weekend' THEN 'Weekend' ELSE businessHour END AS HourType,
+
+            MAX(CpuAvg)      AS CpuAvg,
+            MAX(CpuAvgP95)   AS CpuAvgP95,
+            MAX(CpuMax)      AS CpuMax,
+            MAX(CpuMaxP95)   AS CpuMaxP95,
+            MAX(CpuMaxGt50)  AS CpuMaxGt50,
+            MAX(CpuMaxGt25)  AS CpuMaxGt25,
+            MAX(CpuMaxGt10)  AS CpuMaxGt10,
+
+            MAX(MemResidentMax)     AS MemResidentMax,
+            MAX(MemResidentAvg)     AS MemResidentAvg,
+            MAX(MemResidentMaxPct)  AS MemResidentMaxPct,
+            MAX(MemResidentAvgPct)  AS MemResidentAvgPct,
+            MAX(MemResidentP95Pct)  AS MemResidentP95Pct,
+
+            MAX(NetInAvg)      AS NetInAvg,
+            MAX(NetInMax)      AS NetInMax,
+            MAX(NetOutAvg)     AS NetOutAvg,
+            MAX(NetOutMax)     AS NetOutMax,
+            MAX(NetRequestsMax) AS NetRequestsMax,
+
+            SUM(ConnectionsMax) AS ConnectionsMax,
+            SUM(ConnectionsAvg) AS ConnectionsAvg,
+            MAX(ConnUtilizationPct) AS ConnUtilizationPct,
+
+            MAX(OpcQueryMax)    AS OpcQueryMax,
+            MAX(OpcInsertMax)   AS OpcInsertMax
+        FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+        WHERE _date BETWEEN '{start_date}' AND '{end_date}'
+          AND ClusterKey = {cluster_key}
+          AND [type] IN ('{day_type}')
+          AND (businessHour IN ('{business_hour}') OR businessHour IN ('{business_hour1}'))
+        GROUP BY
+            ClusterKey, ClusterName, InstanceSize, ProviderName, RegionName,
+            _date, _hour, [type],
+            CASE WHEN [type] = 'Weekend' THEN 'Weekend' ELSE businessHour END
+        ORDER BY _date, _hour
+    """
+
+
+# ===========================================================================
+# 8. EFFICIENCY CALCULATION
+# ===========================================================================
+
+
+def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: str, specs: dict) -> tuple:
+    avg_cpu  = _safe_mean(data["CpuAvg"])                    if "CpuAvg"             in data.columns else 0.0
+    max_cpu  = _safe_max(data["CpuMax"])                     if "CpuMax"             in data.columns else 0.0
+    avg_mem  = _safe_mean(data["MemResidentAvgPct"])          if "MemResidentAvgPct"  in data.columns else 0.0
+    max_mem  = _safe_max(data["MemResidentMaxPct"])           if "MemResidentMaxPct"  in data.columns else 0.0
+    avg_conn = _safe_mean(data["ConnUtilizationPct"])         if "ConnUtilizationPct" in data.columns else 0.0
+
+    current_efficiency = json.dumps({
+        "CpuAvgPct":  round(avg_cpu,  2),
+        "CpuMaxPct":  round(max_cpu,  2),
+        "MemAvgPct":  round(avg_mem,  2),
+        "MemMaxPct":  round(max_mem,  2),
+        "ConnPct":    round(avg_conn, 2),
+    })
+
+    current_ram  = specs.get(actual_sku,      {}).get("RAM_GB",          0.0)
+    rec_ram      = specs.get(recommended_sku, {}).get("RAM_GB",          0.0)
+    current_conn = specs.get(actual_sku,      {}).get("ConnectionLimit",  0.0)
+    rec_conn     = specs.get(recommended_sku, {}).get("ConnectionLimit",  0.0)
+    current_vcpu = specs.get(actual_sku,      {}).get("vCPUs",            0)
+    rec_vcpu     = specs.get(recommended_sku, {}).get("vCPUs",            0)
+
+    proj_mem     = round((avg_mem  * current_ram  / rec_ram)  if rec_ram  > 0 else 0.0,     2)
+    proj_conn    = round((avg_conn * current_conn / rec_conn) if rec_conn > 0 else 0.0,     2)
+    proj_cpu_avg = round((avg_cpu  * current_vcpu / rec_vcpu) if rec_vcpu > 0 else avg_cpu, 2)
+    proj_cpu_max = round((max_cpu  * current_vcpu / rec_vcpu) if rec_vcpu > 0 else max_cpu, 2)
+
+    within_efficiency = json.dumps({
+        "ProjectedCpuAvgPct": proj_cpu_avg,
+        "ProjectedCpuMaxPct": proj_cpu_max,
+        "ProjectedMemPct":    proj_mem,
+        "ProjectedConnPct":   proj_conn,
+        "RecommendedSku":     recommended_sku,
+    })
+
+    return current_efficiency, within_efficiency
+
+
+# ===========================================================================
+# 9. MAIN PER-CLUSTER PIPELINE
+# ===========================================================================
+
+
+def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, provider_name: str, region_name: str, config: dict, metacache: dict) -> dict | None:
+    start_date = config["StartDate"]
+    end_date = config["EndDate"]
+    day_type = config["Type"]
+    bh = config["BusinessHour"]
+    bh1 = config["BusinessHour1"]
+
+    meta_key = (str(provider_name).upper(), str(region_name).upper())
+    if meta_key not in metacache:
+        print(f"[DEBUG] Loading metaconfig for provider={meta_key[0]}, region={meta_key[1]}")
+        metacache[meta_key] = load_metaconfig(meta_key[0], meta_key[1])
+    specs, ordered_tiers = metacache[meta_key]
+
+    if not ordered_tiers:
+        print(f"[DEBUG] No ordered_tiers found for provider={provider_name}, region={region_name}. Skipping cluster {cluster_name}.")
+        return None
+
+    actual_sku = str(instance_size).upper()
+    if actual_sku not in ordered_tiers:
+        print(f"[DEBUG] Actual SKU {actual_sku} not in ordered_tiers for cluster {cluster_name}. Skipping.")
+        return None
+
+    sql = build_cluster_metrics_query(cluster_key, start_date, end_date, day_type, bh, bh1)
+    data = fetch_data(sql)
+    if data.empty:
+        print(f"[DEBUG] No metrics data for cluster {cluster_name} (key={cluster_key}) in date range {start_date} to {end_date}.")
+        return None
+
+    data["InstanceSize"] = actual_sku
+
+    cpu_rec = recommendations("Cpu", data, actual_sku, ordered_tiers)
+    mem_rec = recommendations("Mem", data, actual_sku, ordered_tiers)
+    conn_sku, conn_comment = connections_recommendation(data, actual_sku, ordered_tiers, specs)
+
+    cpu_sku = cpu_rec[0][0] if cpu_rec else actual_sku
+    mem_sku = mem_rec[0][0] if mem_rec else actual_sku
+
+    current_idx = tier_index(actual_sku, ordered_tiers)
+    cpu_idx = tier_index(cpu_sku, ordered_tiers)
+    mem_idx = tier_index(mem_sku, ordered_tiers)
+    conn_idx = tier_index(conn_sku, ordered_tiers)
+
+    overall_idx = max(cpu_idx, mem_idx, conn_idx)
+    overall_sku = ordered_tiers[overall_idx]
+
+    # ── CONNECTION-ONLY UPSIZE → NOCHANGE ────────────────────────────────────
+    # If ONLY connections drive the upsize (CPU and Memory are fine),
+    # keep same SKU — connections can be fixed from application side
+    if (conn_idx > current_idx
+            and cpu_idx  <= current_idx
+            and mem_idx  <= current_idx):
+        overall_idx = current_idx
+        overall_sku = actual_sku
+        print(f"[DEBUG] Connection-only upsize skipped for {cluster_name} — recommend connection pooling review")
+    # ── END CONNECTION-ONLY CHECK ─────────────────────────────────────────────
+
+    current_cost = specs.get(actual_sku, {}).get("CostPrHour", 0.0)
+    recommended_cost = specs.get(overall_sku, {}).get("CostPrHour", 0.0)
+    hours_in_month = _hours_in_range(start_date, end_date)
+    spend_30_days = current_cost * hours_in_month
+    estimated_monthly_savings = (current_cost - recommended_cost) * hours_in_month
+
+    comment = component_comment(cpu_idx, mem_idx, conn_idx, current_idx)
+    # Override comment for connection-only case
+    if (conn_idx > current_idx
+            and cpu_idx  <= current_idx
+            and mem_idx  <= current_idx):
+        comment = "Connections High — Review Connection Pooling"
+
+    misc_comment = f"CPU:{cpu_rec[0][2] if cpu_rec else ''} / Mem:{mem_rec[0][2] if mem_rec else ''} / Connections:{conn_comment}"
+
+    hour_type            = "Weekend" if day_type == "Weekend" else bh
+    avg_cpu_max          = _safe_mean(data["CpuMax"])                      if "CpuMax"             in data.columns else 0.0
+    peak_cpu_max         = _safe_max(data["CpuMax"])                       if "CpuMax"             in data.columns else 0.0
+    mem_utilization_pct  = _safe_quantile(data["MemResidentMaxPct"], 0.95) if "MemResidentMaxPct"  in data.columns else 0.0
+    conn_utilization_pct = _safe_quantile(data["ConnUtilizationPct"], 0.95) if "ConnUtilizationPct" in data.columns else 0.0
+    action               = _action_label(actual_sku, overall_sku, ordered_tiers)
+    audit_utc            = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # ── LOW-CPU ALTERNATIVE ───────────────────────────────────────────────────
+    prov    = str(provider_name).upper()
+    reg     = str(region_name).upper()
+
+    low_cpu_sku  = find_low_cpu_sku(overall_sku, specs, prov, reg)
+    low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
+
+    # Check: don't suggest Low-CPU if peak CPU is high
+    if low_cpu_sku and peak_cpu_max > 50:
+        low_cpu_sku = None
+        low_cpu_cost = 0.0
+
+    low_cpu_savings = round(
+        (current_cost - low_cpu_cost) * hours_in_month, 2
+    ) if low_cpu_sku and low_cpu_cost < current_cost else 0.0
+
+    # RecommendedSku = "M50, M50-low-CPU" if Low-CPU available
+    recommended_sku_display = (
+        f"{overall_sku}, {low_cpu_sku}" if low_cpu_sku else overall_sku
     )
+    # ── END LOW-CPU ───────────────────────────────────────────────────────────
 
-    -- =========================================
-    -- STEP 4 — Build JSON + INSERT into temp
-    -- =========================================
-    SELECT
-        MonthName,
-        ClusterKey,
-        DayType,
-        HourType,
-        CurrentSku,
+    print(f"[DEBUG] Recommendation for cluster {cluster_name}: overall={overall_sku}, "
+          f"low_cpu={low_cpu_sku}, cpu={cpu_sku}, mem={mem_sku}, conn={conn_sku}")
 
-        -- JSON: CurrentEfficiency
-        '{ "CpuEfficiency": "'     + FORMAT(AvgCpuCurrent * 100, 'N2') +
-        '", "CpuEfficiencyP95": "' + FORMAT(P95CpuCurrent * 100, 'N2') +
-        '", "MemEfficiency": "'    + FORMAT(AvgMemCurrent * 100, 'N2') +
-        '", "MemEfficiencyP95": "' + FORMAT(P95MemCurrent * 100, 'N2') + '" }'
-            AS CurrentEfficiency,
+    eff = calculate_efficiency(data, actual_sku, overall_sku, specs)
 
-        -- JSON: WithinEfficiency (Standard SKU projections)
-        '{ "CpuEfficiency": "'     + FORMAT(AvgCpuWithin  * 100, 'N2') +
-        '", "CpuEfficiencyP95": "' + FORMAT(P95CpuWithin  * 100, 'N2') +
-        '", "MemEfficiency": "'    + FORMAT(AvgMemWithin  * 100, 'N2') +
-        '", "MemEfficiencyP95": "' + FORMAT(P95MemWithin  * 100, 'N2') + '" }'
-            AS WithinEfficiency,
-
-        -- JSON: LowCpuEfficiency (Low-CPU SKU projections)
-        CASE WHEN AvgCpuLowCpu IS NOT NULL
-        THEN
-            '{ "CpuEfficiency": "'     + FORMAT(AvgCpuLowCpu  * 100, 'N2') +
-            '", "CpuEfficiencyP95": "' + FORMAT(P95CpuLowCpu  * 100, 'N2') +
-            '", "MemEfficiency": "'    + FORMAT(AvgMemLowCpu  * 100, 'N2') +
-            '", "MemEfficiencyP95": "' + FORMAT(P95MemLowCpu  * 100, 'N2') + '" }'
-        ELSE NULL END
-            AS LowCpuEfficiency
-
-    INTO #EffResult
-    FROM EffP95;
-
-    -- =========================================
-    -- STEP 5 — UPDATE Recommendations table
-    -- =========================================
-    UPDATE tgt
-    SET
-        tgt.CurrentEfficiency = src.CurrentEfficiency,
-        tgt.WithinEfficiency  = src.WithinEfficiency,
-        tgt.LowCpuEfficiency  = src.LowCpuEfficiency
-    FROM [Metrics].[MongoDBRightsizingRecommendations] tgt
-    INNER JOIN #EffResult src
-        ON  tgt.ClusterKey = src.ClusterKey
-        AND tgt.Month      = src.MonthName
-        AND tgt.DayType    = src.DayType
-        AND tgt.HourType   = src.HourType
-        AND tgt.CurrentSku = src.CurrentSku;
-
-END
-GO
+    return {
+        "ClusterKey":              cluster_key,
+        "ClusterName":             cluster_name,
+        "DayType":                 day_type,
+        "HourType":                hour_type,
+        "CurrentSku":              actual_sku,
+        "CurrentCostPrHour":       current_cost,
+        "CpuRec":                  cpu_sku,
+        "MemRec":                  mem_sku,
+        "ConnRec":                 conn_sku,
+        "AvgCpuMax":               avg_cpu_max,
+        "PeakCpuMax":              peak_cpu_max,
+        "MemUtilizationPct":       mem_utilization_pct,
+        "ConnUtilizationPct":      conn_utilization_pct,
+        "RecommendedSku":          recommended_sku_display,   # "M50, M50-low-CPU"
+        "RecommendedCostPrHour":   recommended_cost,
+        "EstimatedMonthlySavings": estimated_monthly_savings,
+        "Comment":                 comment,
+        "MiscComment":             misc_comment,
+        "CurrentEfficiency":       eff[0],
+        "WithinEfficiency":        eff[1],
+        "LowCpuEfficiency":        None,                       # populated by stored proc
+        "Spend30days":             spend_30_days,
+        "WithinFamilySavings":     estimated_monthly_savings,
+        "LowCpuSku":               low_cpu_sku,               # e.g. "M50-low-CPU"
+        "LowCpuSavings":           low_cpu_savings,
+        "Action":                  action,
+        "AuditUtc":                audit_utc,
+    }
 
 
--- =============================================
--- VERIFY
--- =============================================
--- Check SimulatedMetrics table populated
-SELECT
-    COUNT(*)                   AS TotalRows,
-    COUNT(DISTINCT ClusterKey) AS Clusters,
-    MIN([Date])                AS DataFrom,
-    MAX([Date])                AS DataTo
-FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
-GO
+# ===========================================================================
+# 10. OUTPUT INSERT
+# ===========================================================================
 
--- Check cdr-uat projections
-SELECT TOP 5
-    ClusterName, [Date], [Hour], DayType, HourType,
-    CpuAvg, nCpuAvgWithin, nCpuAvgLowCpu,
-    MemAvg, nMemAvgWithin, nMemAvgLowCpu
-FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
-WHERE ClusterName = 'cdr-uat'
-ORDER BY [Date] DESC, [Hour]
-GO
+INSERT_SQL = """
+    INSERT INTO [Metrics].[MongoDBRightsizingRecommendations] (
+        Month, ClusterKey, ClusterName, OrgName, ProjectKey,
+        ProviderName, RegionName, DayType, HourType,
+        CurrentSku, CurrentCostPrHour,
+        CpuRec, MemRec, ConnRec, AvgCpuMax, PeakCpuMax,
+        MemUtilizationPct, ConnUtilizationPct, RecommendedSku,
+        RecommendedCostPrHour, EstimatedMonthlySavings, Comment,
+        MiscComment, CurrentEfficiency, WithinEfficiency,
+        LowCpuEfficiency, Spend30days, WithinFamilySavings,
+        LowCpuSku, LowCpuSavings, Action, AuditUtc
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
 
--- Check efficiency columns updated in recommendations
-SELECT
-    ClusterName, DayType, HourType,
-    CurrentEfficiency,
-    WithinEfficiency,
-    LowCpuEfficiency
-FROM [Metrics].[MongoDBRightsizingRecommendations]
-WHERE ClusterName = 'cdr-uat'
-GO
+INSERT_COLUMNS = [
+    "Month", "ClusterKey", "ClusterName", "OrgName", "ProjectKey",
+    "ProviderName", "RegionName", "DayType", "HourType",
+    "CurrentSku", "CurrentCostPrHour",
+    "CpuRec", "MemRec", "ConnRec", "AvgCpuMax", "PeakCpuMax",
+    "MemUtilizationPct", "ConnUtilizationPct", "RecommendedSku",
+    "RecommendedCostPrHour", "EstimatedMonthlySavings", "Comment",
+    "MiscComment", "CurrentEfficiency", "WithinEfficiency",
+    "LowCpuEfficiency", "Spend30days", "WithinFamilySavings",
+    "LowCpuSku", "LowCpuSavings", "Action", "AuditUtc",
+]
+
+
+def call_stored_proc(proc_name: str, month: str):
+    """Call a stored procedure with @LastMonth parameter"""
+    try:
+        conn = connect_to_db()
+        cur  = conn.cursor()
+        print(f"[DEBUG] Calling {proc_name} for month {month}...")
+        cur.execute(f"EXEC {proc_name} @LastMonth = ?", month)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[DEBUG] {proc_name} completed successfully.")
+    except Exception as exc:
+        print(f"Error calling {proc_name}: {exc}")
+        raise
+
+
+def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
+    total = len(df)
+    print(f"[DEBUG] Starting upsert of {total} rows...")
+
+    for start in range(0, total, chunk_size):
+        chunk = df.iloc[start: start + chunk_size].copy()
+        conn  = connect_to_db()
+        cur   = conn.cursor()
+
+        for _, row in chunk.iterrows():
+            # Step 1: Delete existing row for this key (safe - only deletes 1 row)
+            cur.execute("""
+                DELETE FROM [Metrics].[MongoDBRightsizingRecommendations]
+                WHERE Month      = ?
+                AND   ClusterKey = ?
+                AND   DayType    = ?
+                AND   HourType   = ?
+            """, row["Month"], row["ClusterKey"], row["DayType"], row["HourType"])
+
+            # Step 2: Insert fresh row
+            cur.execute(INSERT_SQL,
+                tuple(row[col] for col in INSERT_COLUMNS))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[DEBUG] Upserted {min(start + chunk_size, total)}/{total} rows...")
+
+    print(f"[DEBUG] Upsert complete.")
+
+
+# ===========================================================================
+# 11. MAIN
+# ===========================================================================
+
+if __name__ == "__main__":
+    today = date.today()
+
+    # Auto-detect date range from aggregated table
+    date_sql = """
+        SELECT
+            MIN(_date) AS MinDate,
+            MAX(_date) AS MaxDate
+        FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+    """
+    date_df = fetch_data(date_sql)
+    start_dt = pd.to_datetime(date_df["MinDate"].iloc[0])
+    end_dt   = pd.to_datetime(date_df["MaxDate"].iloc[0])
+
+    months      = [end_dt.strftime("%Y-%m")]
+    start_dates = [start_dt.strftime("%Y-%m-%d")]
+    end_dates   = [end_dt.strftime("%Y-%m-%d")]
+
+    print(f"[DEBUG] Date range: {start_dates[0]} to {end_dates[0]} | Month: {months[0]}")
+
+    types = ["Weekday", "Weekday", "Weekend"]
+    business_hours  = ["BusinessHours", "NonBusinessHours", "Weekend"]
+    business_hours1 = ["BusinessHours", "NonBusinessHours", "Weekend"]
+
+    month_dict = {}
+    for month, start, end in zip(months, start_dates, end_dates):
+        month_dict[month] = [
+            {"Type": t, "BusinessHour": bh, "BusinessHour1": bh1, "StartDate": start, "EndDate": end}
+            for t, bh, bh1 in zip(types, business_hours, business_hours1)
+        ]
+
+    columns = INSERT_COLUMNS.copy()
+
+    out_df = pd.DataFrame(columns=columns)
+    metacache = {}
+
+
+    for month, configs in month_dict.items():
+        print(f"[DEBUG] Processing month: {month}")
+        for config in configs:
+            print(f"[DEBUG] Config: {config}")
+            _count(config["StartDate"], config["EndDate"])
+
+            inv_sql = build_cluster_inventory_query(config["StartDate"], config["EndDate"])
+            clusters = fetch_data(inv_sql)
+            print(f"[DEBUG] Cluster inventory returned {clusters.shape[0]} rows.")
+            if clusters.empty:
+                print(f"[DEBUG] No clusters found for date range {config['StartDate']} to {config['EndDate']}.")
+                continue
+
+            for _, row in clusters.iterrows():
+                cluster_key = int(row["ClusterKey"])
+                cluster_name = str(row["ClusterName"])
+                instance_size = str(row["InstanceSize"])
+                provider_name = str(row.get("ProviderName", ""))
+                region_name = str(row.get("RegionName", ""))
+                org_key = row.get("OrgKey", "")
+                project_key = row.get("ProjectKey", "")
+
+                print(f"[DEBUG] Processing cluster: {cluster_name} (key={cluster_key})")
+                result = process_cluster(
+                    cluster_key,
+                    cluster_name,
+                    instance_size,
+                    provider_name,
+                    region_name,
+                    config,
+                    metacache,
+                )
+                if result is None:
+                    print(f"[DEBUG] No recommendation generated for cluster {cluster_name} (key={cluster_key}).")
+                    continue
+
+                result["Month"] = month
+                result["OrgName"] = row.get("OrgName") or org_key
+                result["ProjectKey"] = project_key
+                result["ProviderName"] = provider_name
+                result["RegionName"] = region_name
+
+                out_df = pd.concat([out_df, pd.DataFrame([result])], ignore_index=True)
+
+    if not out_df.empty:
+        print(f"Total recommendations: {len(out_df)}")
+        print(out_df[["ClusterName", "CurrentSku", "RecommendedSku", "Comment"]].to_string())
+
+        # Step 1: Insert recommendations
+        upsert_in_chunks(out_df)
+        print("Results upserted into [Metrics].[MongoDBRightsizingRecommendations].")
+
+        # Step 2: Run SimulatedMetrics proc
+        call_stored_proc(
+            "[Metrics].[usp_MongoDBRightsizingSimulatedMetrics]",
+            months[0]
+        )
+
+        # Step 3: Run Efficiency proc
+        call_stored_proc(
+            "[Metrics].[usp_MongoDBRightsizingEfficiency]",
+            months[0]
+        )
+
+        print("All done — Recommendations, SimulatedMetrics and Efficiency updated.")
+    else:
+        print("No recommendations generated.")
