@@ -29,23 +29,7 @@ warnings.filterwarnings("ignore")
 # 1. DATABASE CONNECTION
 # ===========================================================================
 
-SERVER = "hybridasa.sql.azuresynapse.net"
-DATABASE = "hybridasa_dedicatedpool"
-USERNAME = "hybridasawrite"
-PASSWORD = "H@Sh1CoRS!"
-DRIVER = "{ODBC Driver 17 for SQL Server}"
-
-
-def connect_to_db():
-    try:
-        conn = pyodbc.connect(
-            f"DRIVER={DRIVER};"
-            f"SERVER={SERVER};"
-            f"DATABASE={DATABASE};"
-            f"UID={USERNAME};"
-            f"PWD={PASSWORD};"
-        )
-        return conn
+S
     except Exception as exc:
         print(f"Error connecting to database: {exc}")
         raise
