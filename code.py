@@ -15,6 +15,14 @@
 --      now MIN (correct: worst/struggling shard)
 --   3. businessHour CASE fixed (v4 fix)
 --      Weekend rows now correctly labeled Weekend
+--   4. ProcessKey columns added (Neeraja 10-Jun-2026)
+--      MaxCpuProcessId = ProcessId with highest CpuMax
+--      MaxMemProcessId = ProcessId with highest MemResidentMaxPct
+--      Enables direct validation against raw metric tables
+-- DEPLOY NOTE: Run ALTER TABLE before CREATE OR ALTER PROC:
+--   ALTER TABLE [Metrics].[MongoDBRightsizingAggregated5Min]
+--   ADD MaxCpuProcessId NVARCHAR(500) NULL,
+--       MaxMemProcessId NVARCHAR(500) NULL
 -- All v3 fixes retained:
 --   - ConnUtilizationPct at cluster level
 --   - ConnectionLimit carried through
@@ -51,6 +59,7 @@ BEGIN
     IF OBJECT_ID('tempdb..#Keys')             IS NOT NULL DROP TABLE #Keys;
     IF OBJECT_ID('tempdb..#FinalMetrics')     IS NOT NULL DROP TABLE #FinalMetrics;
     IF OBJECT_ID('tempdb..#TrueClusterP95')   IS NOT NULL DROP TABLE #TrueClusterP95;
+    IF OBJECT_ID('tempdb..#MaxProcessIds')    IS NOT NULL DROP TABLE #MaxProcessIds;
     IF OBJECT_ID('tempdb..#ClusterMetrics')   IS NOT NULL DROP TABLE #ClusterMetrics;
 
     -- =========================================
@@ -410,6 +419,7 @@ BEGIN
     -- =========================================
     SELECT
         p.ClusterKey,
+        p.ProcessId                                                         AS ProcessId,
         cl.Name                                                             AS ClusterName,
         p.ProjectKey,
         p.OrgKey,
@@ -537,6 +547,40 @@ BEGIN
     GROUP BY ClusterKey, _date, _hour, [type], businessHour;
 
     -- =========================================
+    -- STEP 1C — Dominant Process per cluster/hour
+    -- MaxCpuProcessId = process with highest CpuMax
+    -- MaxMemProcessId = process with highest MemPct
+    -- Used for validation against raw metric tables
+    -- =========================================
+    ;WITH Ranked AS (
+        SELECT
+            ClusterKey,
+            _date,
+            _hour,
+            [type],
+            businessHour,
+            ProcessId,
+            ROW_NUMBER() OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour
+                ORDER BY CpuMax DESC)            AS CpuRank,
+            ROW_NUMBER() OVER (
+                PARTITION BY ClusterKey, _date, _hour, [type], businessHour
+                ORDER BY MemResidentMaxPct DESC)  AS MemRank
+        FROM #FinalMetrics
+    )
+    SELECT
+        ClusterKey,
+        _date,
+        _hour,
+        [type],
+        businessHour,
+        MAX(CASE WHEN CpuRank = 1 THEN ProcessId END) AS MaxCpuProcessId,
+        MAX(CASE WHEN MemRank = 1 THEN ProcessId END) AS MaxMemProcessId
+    INTO #MaxProcessIds
+    FROM Ranked
+    GROUP BY ClusterKey, _date, _hour, [type], businessHour;
+
+    -- =========================================
     -- STEP 2 — Cluster Level Aggregation
     -- Collapses all shard processes → 1 row per cluster per hour
     -- ConnUtilizationPct calculated HERE using:
@@ -594,7 +638,11 @@ BEGIN
 
         -- Ops
         MAX(f.OpcQueryMax)        AS OpcQueryMax,
-        MAX(f.OpcInsertMax)       AS OpcInsertMax
+        MAX(f.OpcInsertMax)       AS OpcInsertMax,
+
+        -- Dominant process IDs (v5)
+        MAX(mx.MaxCpuProcessId)   AS MaxCpuProcessId,
+        MAX(mx.MaxMemProcessId)   AS MaxMemProcessId
 
     INTO #ClusterMetrics
     FROM #FinalMetrics f
@@ -604,6 +652,12 @@ BEGIN
         AND tp._hour       = f._hour
         AND tp.[type]      = f.[type]
         AND tp.businessHour= f.businessHour
+    LEFT JOIN #MaxProcessIds mx
+        ON  mx.ClusterKey  = f.ClusterKey
+        AND mx._date       = f._date
+        AND mx._hour       = f._hour
+        AND mx.[type]      = f.[type]
+        AND mx.businessHour= f.businessHour
     GROUP BY
         f.ClusterKey, f.ClusterName,
         f.DateTimeEST, f._date, f._hour, f.[type], f.businessHour;
@@ -642,7 +696,9 @@ BEGIN
         T.ConnectionsAvg        = S.ConnectionsAvg,
         T.ConnUtilizationPct    = S.ConnUtilizationPct,
         T.OpcQueryMax           = S.OpcQueryMax,
-        T.OpcInsertMax          = S.OpcInsertMax
+        T.OpcInsertMax          = S.OpcInsertMax,
+        T.MaxCpuProcessId       = S.MaxCpuProcessId,
+        T.MaxMemProcessId       = S.MaxMemProcessId
     FROM [Metrics].[MongoDBRightsizingAggregated5Min] T
     JOIN #ClusterMetrics S
         ON  T.ClusterKey   = S.ClusterKey
@@ -667,7 +723,8 @@ BEGIN
         MemResidentMaxPct, MemResidentAvgPct, MemResidentP95Pct,
         NetInAvg, NetInMax, NetOutAvg, NetOutMax, NetRequestsMax,
         ConnectionsMax, ConnectionsAvg, ConnUtilizationPct,
-        OpcQueryMax, OpcInsertMax
+        OpcQueryMax, OpcInsertMax,
+        MaxCpuProcessId, MaxMemProcessId
     )
     SELECT
         S.ClusterKey, S.ClusterName,
@@ -680,7 +737,8 @@ BEGIN
         S.MemResidentMaxPct, S.MemResidentAvgPct, S.MemResidentP95Pct,
         S.NetInAvg, S.NetInMax, S.NetOutAvg, S.NetOutMax, S.NetRequestsMax,
         S.ConnectionsMax, S.ConnectionsAvg, S.ConnUtilizationPct,
-        S.OpcQueryMax, S.OpcInsertMax
+        S.OpcQueryMax, S.OpcInsertMax,
+        S.MaxCpuProcessId, S.MaxMemProcessId
     FROM #ClusterMetrics S
     WHERE NOT EXISTS (
         SELECT 1
@@ -699,6 +757,11 @@ GO
 -- =============================================
 -- DEPLOY STEPS
 -- =============================================
+-- Step 0: Add new columns (run ONCE only)
+--   ALTER TABLE [Metrics].[MongoDBRightsizingAggregated5Min]
+--   ADD MaxCpuProcessId NVARCHAR(500) NULL,
+--       MaxMemProcessId NVARCHAR(500) NULL
+--   GO
 -- Step 1: TRUNCATE TABLE [Metrics].[MongoDBRightsizingAggregated5Min];
 -- Step 2: Run CREATE OR ALTER PROC above
 -- Step 3: EXEC [Metrics].[usp_MongoDBRightsizingAggregatedMetrics5Min]
