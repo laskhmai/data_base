@@ -1,9 +1,3 @@
--- Check raw MemAvailableMin values
-SELECT TOP 5
-    ClusterName,
-    MIN(MemAvailableMin) AS MinAvailable,
-    MAX(MemAvailableMin) AS MaxAvailable
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'coreapi-shared-prod'
-GROUP BY ClusterName
-GO
+Yes you're right, P95 is already calculated per process in the earlier step. The issue is when I rolled it up to cluster level I took MAX across all processes instead of keeping a true cluster-level P95.
+
+And totally agree P95 is more important than MAX for rightsizing. Should I change the cluster-level rollup to AVG of the process P95 values? Or do you want me to recalculate P95 from the raw readings by combining all process data together?
