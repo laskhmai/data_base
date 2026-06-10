@@ -29,7 +29,23 @@ warnings.filterwarnings("ignore")
 # 1. DATABASE CONNECTION
 # ===========================================================================
 
-S
+SERVER = "hybridasa.sql.azuresynapse.net"
+DATABASE = "hybridasa_dedicatedpool"
+USERNAME = "hybridasawrite"
+PASSWORD = "H@Sh1CoRS!"
+DRIVER = "{ODBC Driver 17 for SQL Server}"
+
+
+def connect_to_db():
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={DRIVER};"
+            f"SERVER={SERVER};"
+            f"DATABASE={DATABASE};"
+            f"UID={USERNAME};"
+            f"PWD={PASSWORD};"
+        )
+        return conn
     except Exception as exc:
         print(f"Error connecting to database: {exc}")
         raise
@@ -129,11 +145,11 @@ def load_metaconfig(provider: str, region: str) -> tuple[dict, list[str]]:
     if df.empty:
         return {}, []
 
-    # Keep a single best row per SkuName (prefer non-null connection limit, lower cost)
+    # Keep a single best row per SkuName
     df["ConnectionLimit"] = pd.to_numeric(df["ConnectionLimit"], errors="coerce")
-    df["CostPrHour"] = pd.to_numeric(df["CostPrHour"], errors="coerce")
-    df["MemorySizeGB"] = pd.to_numeric(df["MemorySizeGB"], errors="coerce")
-    df["vCores"] = pd.to_numeric(df["vCores"], errors="coerce")
+    df["CostPrHour"]      = pd.to_numeric(df["CostPrHour"],      errors="coerce")
+    df["MemorySizeGB"]    = pd.to_numeric(df["MemorySizeGB"],    errors="coerce")
+    df["vCores"]          = pd.to_numeric(df["vCores"],          errors="coerce")
 
     df = df.sort_values(by=["SkuName", "ConnectionLimit", "CostPrHour"], ascending=[True, False, True])
     df = df.drop_duplicates(subset=["SkuName"], keep="first")
@@ -142,16 +158,19 @@ def load_metaconfig(provider: str, region: str) -> tuple[dict, list[str]]:
     for _, row in df.iterrows():
         sku = str(row["SkuName"]).upper()
         specs[sku] = {
-            "RAM_GB": float(row["MemorySizeGB"]) if pd.notna(row["MemorySizeGB"]) else 0.0,
-            "vCPUs": float(row["vCores"]) if pd.notna(row["vCores"]) else 0.0,
+            "RAM_GB":          float(row["MemorySizeGB"])   if pd.notna(row["MemorySizeGB"])   else 0.0,
+            "vCPUs":           float(row["vCores"])         if pd.notna(row["vCores"])         else 0.0,
             "ConnectionLimit": float(row["ConnectionLimit"]) if pd.notna(row["ConnectionLimit"]) else 0.0,
-            "CostPrHour": float(row["CostPrHour"]) if pd.notna(row["CostPrHour"]) else 0.0,
+            "CostPrHour":      float(row["CostPrHour"])     if pd.notna(row["CostPrHour"])     else 0.0,
+            "Tier":            str(row["Tier"]).strip()     if pd.notna(row["Tier"])           else "",
         }
 
-    # Tier order: primarily RAM, then vCPU
+    # Tier order: Standard + NVMe only (Low-CPU handled separately)
+    # Filter out Low-CPU, Burstable to keep clean ordering
     ordered = sorted(
-        list(specs.keys()),
-        key=lambda sku: (specs[sku]["RAM_GB"], specs[sku]["vCPUs"]) 
+        [s for s in specs
+         if specs[s].get("Tier", "").upper() in ("STANDARD", "NVME")],
+        key=lambda sku: (specs[sku]["RAM_GB"], specs[sku]["vCPUs"])
     )
     return specs, ordered
 
@@ -164,17 +183,16 @@ def tier_index(sku: str, ordered_tiers: list[str]) -> int:
 
 
 def find_low_cpu_sku(standard_sku: str, specs: dict, provider: str, region: str) -> str | None:
-    """Find the cheapest Low-CPU alternative with same RAM as standard_sku."""
+    """Find cheapest Low-CPU SKU with same RAM as standard_sku.
+    Note: specs already filtered by provider/region from SQL query.
+    Provider/Region check removed — not stored in specs dict.
+    """
     rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
-    prov    = str(provider).upper()
-    reg     = str(region).upper()
 
     low_cpu_skus = [
         s for s in specs
-        if  specs[s].get("RAM_GB")    == rec_ram
-        and specs[s].get("Tier",  "").upper() == "LOW-CPU"
-        and specs[s].get("Provider", "").upper() == prov
-        and specs[s].get("Region",   "").upper() == reg
+        if  specs[s].get("RAM_GB")           == rec_ram
+        and specs[s].get("Tier", "").upper() == "LOW-CPU"
     ]
     if not low_cpu_skus:
         return None
@@ -379,7 +397,7 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
         ts = trend_status[i - 1] if i > 0 and i - 1 < len(trend_status) else "No trend"
 
         if ts == "Increasing" or a1 == 3:
-            if peak_val > 50:
+            if peak_val > 80:
                 # Fix 1: Genuinely high load -> scale UP one tier
                 target_idx = min(len(ordered_tiers) - 1, current_idx + 1)
             else:
@@ -396,7 +414,7 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
         weekly_actions.append((status, ordered_tiers[target_idx]))
 
     # Fix 2: Only treat status=3 as ScaleUp when peak is genuinely high
-    if any(s == 3 for s, _ in weekly_actions) and peak_val > 50:
+    if any(s == 3 for s, _ in weekly_actions) and peak_val > 80:
         final_idx = min(len(ordered_tiers) - 1, current_idx + 1)
     elif all(s == 1 for s, _ in weekly_actions):
         final_idx = max(0, current_idx - 2)
@@ -424,17 +442,22 @@ def connections_recommendation(data: pd.DataFrame, actual_sku: str, ordered_tier
 
 
 def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: int) -> str:
+    """
+    Classify each component based on its recommended SKU vs current SKU:
+      val > current_idx → Intensive    (needs bigger SKU)
+      val < current_idx → Underutilized (can use smaller SKU)
+      val == current_idx → Optimal     (current SKU is right)
+    """
     components = {"CPU": cpu_idx, "Memory": mem_idx, "Connections": conn_idx}
-    max_val = max(components.values())
 
     intensive, underutilized, optimal = [], [], []
     for name, val in components.items():
-        if val == current_idx:
-            optimal.append(name)
-        elif val < current_idx and val < max_val:
-            underutilized.append(name)
-        elif val == max_val:
+        if val > current_idx:
             intensive.append(name)
+        elif val < current_idx:
+            underutilized.append(name)
+        else:
+            optimal.append(name)
 
     parts = []
     if intensive:
@@ -442,7 +465,7 @@ def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: in
     if underutilized:
         parts.append(", ".join(underutilized) + " Underutilized")
     if optimal:
-        parts.append(", ".join(optimal) + " Optimal Usage")
+        parts.append(", ".join(optimal) + " Optimal")
     return " ; ".join(parts)
 
 
@@ -590,6 +613,18 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
         print(f"[DEBUG] Actual SKU {actual_sku} not in ordered_tiers for cluster {cluster_name}. Skipping.")
         return None
 
+    # Filter ordered_tiers to same tier as current SKU
+    # NVMe cluster → NVMe options only
+    # Standard cluster → Standard options only
+    current_tier = specs.get(actual_sku, {}).get("Tier", "Standard").upper()
+    ordered_tiers = [
+        s for s in ordered_tiers
+        if specs[s].get("Tier", "").upper() == current_tier
+    ]
+    if actual_sku not in ordered_tiers:
+        print(f"[DEBUG] SKU {actual_sku} tier={current_tier} has no matching tiers. Skipping.")
+        return None
+
     sql = build_cluster_metrics_query(cluster_key, start_date, end_date, day_type, bh, bh1)
     data = fetch_data(sql)
     if data.empty:
@@ -635,7 +670,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
     if (conn_idx > current_idx
             and cpu_idx  <= current_idx
             and mem_idx  <= current_idx):
-        comment = "Connections High — Review Connection Pooling"
+        comment = "High Connections — Review Connection Pooling"
 
     misc_comment = f"CPU:{cpu_rec[0][2] if cpu_rec else ''} / Mem:{mem_rec[0][2] if mem_rec else ''} / Connections:{conn_comment}"
 
@@ -655,7 +690,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
     low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
 
     # Check: don't suggest Low-CPU if peak CPU is high
-    if low_cpu_sku and peak_cpu_max > 50:
+    if low_cpu_sku and peak_cpu_max > 80:
         low_cpu_sku = None
         low_cpu_cost = 0.0
 
@@ -740,10 +775,10 @@ def call_stored_proc(proc_name: str, month: str):
     """Call a stored procedure with @LastMonth parameter"""
     try:
         conn = connect_to_db()
+        conn.autocommit = True   # DDL inside proc needs no transaction
         cur  = conn.cursor()
         print(f"[DEBUG] Calling {proc_name} for month {month}...")
         cur.execute(f"EXEC {proc_name} @LastMonth = ?", month)
-        conn.commit()
         cur.close()
         conn.close()
         print(f"[DEBUG] {proc_name} completed successfully.")
