@@ -1,26 +1,43 @@
 """
-MongoDB Atlas Rightsizing Engine (5-Min Aggregated Metrics)
-===========================================================
-Uses [Metrics].[MongoDBRightsizingAggregated5Min] as source.
-Implements PostgreSQL-like pattern:
-- per-slice evaluation (weekday business / weekday non-business / weekend)
-- action labeling (L1/L2/L3)
-- weekly clustering
-- trend + seasonality
-- one recommendation per cluster
+MongoDB Atlas Rightsizing Engine
+=================================
+Version : v8 FINAL
+Source  : [Metrics].[MongoDBRightsizingAggregated5Min]
+Author  : COSD Team — Humana DevOps 9009227
+
+Flow:
+  1. Load aggregated metrics per cluster per hour
+  2. Calculate CPU / Memory / Connection recommendations
+  3. Insert into [Metrics].[MongoDBRightsizingRecommendations]
+  4. Call usp_MongoDBRightsizingSimulatedMetrics
+  5. Call usp_MongoDBRightsizingEfficiency
+
+All Changes from v7:
+  - MetaConfig: keyed by Instance (not SkuName) → matches InstanceSize
+  - MetaConfig: removed unused SkuName, Provider, Region columns from SELECT
+  - ordered_tiers: excludes Low-CPU only (Standard + NVMe included)
+  - process_cluster: filters ordered_tiers to same tier as current SKU
+  - find_low_cpu_sku: removed wrong Provider/Region check (specs already filtered)
+  - component_comment: fixed logic (val > current_idx = Intensive)
+  - peak_val threshold: 50 → 80 (ScaleUp only on genuinely high load)
+  - Low-CPU skip threshold: 80% peak CPU
+  - Connection-only upsize: → NoChange + comment
+  - RecommendedSku: "M50, M50-low-CPU" format
+  - LowCpuSku, LowCpuSavings: new columns
+  - OutsideEfficiency → LowCpuEfficiency (renamed)
+  - OverallDifferentVersionSavings → LowCpuSavings (renamed)
+  - calculate_efficiency: added vCores projection
+  - call_stored_proc: conn.autocommit = True (fixes Synapse DDL error)
 """
 
-import re
 import json
 import warnings
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
 import pyodbc
-from dateutil.relativedelta import relativedelta
 from sklearn.cluster import KMeans
-
 
 warnings.filterwarnings("ignore")
 
@@ -29,11 +46,11 @@ warnings.filterwarnings("ignore")
 # 1. DATABASE CONNECTION
 # ===========================================================================
 
-SERVER = "hybridasa.sql.azuresynapse.net"
+SERVER   = "hybridasa.sql.azuresynapse.net"
 DATABASE = "hybridasa_dedicatedpool"
 USERNAME = "hybridasawrite"
 PASSWORD = "H@Sh1CoRS!"
-DRIVER = "{ODBC Driver 17 for SQL Server}"
+DRIVER   = "{ODBC Driver 17 for SQL Server}"
 
 
 def connect_to_db():
@@ -68,10 +85,9 @@ def fetch_data(sql_query: str) -> pd.DataFrame:
 # 2. HELPERS
 # ===========================================================================
 
-
 def _count(start_date: str, end_date: str) -> tuple[int, int]:
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    end   = datetime.strptime(end_date,   "%Y-%m-%d").date()
     weekday_count = weekend_count = 0
     current = start
     while current <= end:
@@ -84,31 +100,25 @@ def _count(start_date: str, end_date: str) -> tuple[int, int]:
 
 
 def _safe_quantile(series: pd.Series, q: float) -> float:
-    if series.empty:
-        return 0.0
-    return float(series.quantile(q))
+    return float(series.quantile(q)) if not series.empty else 0.0
 
 
 def _safe_mean(series: pd.Series) -> float:
-    if series.empty:
-        return 0.0
-    return float(series.mean())
+    return float(series.mean()) if not series.empty else 0.0
 
 
 def _safe_max(series: pd.Series) -> float:
-    if series.empty:
-        return 0.0
-    return float(series.max())
+    return float(series.max()) if not series.empty else 0.0
 
 
 def _hours_in_range(start_date: str, end_date: str) -> int:
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    end   = datetime.strptime(end_date,   "%Y-%m-%d").date()
     return ((end - start).days + 1) * 24
 
 
 def _action_label(current_sku: str, recommended_sku: str, ordered_tiers: list[str]) -> str:
-    current_idx = tier_index(current_sku, ordered_tiers)
+    current_idx     = tier_index(current_sku,     ordered_tiers)
     recommended_idx = tier_index(recommended_sku, ordered_tiers)
     if current_idx == -1 or recommended_idx == -1:
         return "Unknown"
@@ -120,56 +130,59 @@ def _action_label(current_sku: str, recommended_sku: str, ordered_tiers: list[st
 
 
 # ===========================================================================
-# 3. METACONFIG (DYNAMIC TIERS)
+# 3. METACONFIG
 # ===========================================================================
 
-
 def load_metaconfig(provider: str, region: str) -> tuple[dict, list[str]]:
+    """
+    Load SKU specs from MetaConfig.
+    Key by Instance (matches InstanceSize in aggregated table — same as aggregation proc).
+    Excludes Free and Flex tiers.
+    """
     sql = f"""
         SELECT
-            SkuName,
+            Instance,
             Tier,
             vCores,
             MemorySizeGB,
-            Instance,
             CostPrHour,
-            Provider,
-            Region,
             ConnectionLimit
         FROM [Analytics].[MongoDBMetaConfig]
         WHERE Provider = '{provider}'
-          AND Region = '{region}'
+          AND Region   = '{region}'
           AND Tier NOT IN ('Free', 'Flex')
     """
     df = fetch_data(sql)
     if df.empty:
         return {}, []
 
-    # Keep a single best row per SkuName
     df["ConnectionLimit"] = pd.to_numeric(df["ConnectionLimit"], errors="coerce")
     df["CostPrHour"]      = pd.to_numeric(df["CostPrHour"],      errors="coerce")
     df["MemorySizeGB"]    = pd.to_numeric(df["MemorySizeGB"],    errors="coerce")
     df["vCores"]          = pd.to_numeric(df["vCores"],          errors="coerce")
 
-    df = df.sort_values(by=["SkuName", "ConnectionLimit", "CostPrHour"], ascending=[True, False, True])
-    df = df.drop_duplicates(subset=["SkuName"], keep="first")
+    # Deduplicate: keep best row per Instance (highest ConnectionLimit, lowest cost)
+    df = df.sort_values(
+        by=["Instance", "ConnectionLimit", "CostPrHour"],
+        ascending=[True, False, True]
+    )
+    df = df.drop_duplicates(subset=["Instance"], keep="first")
 
     specs = {}
     for _, row in df.iterrows():
-        sku = str(row["SkuName"]).upper()
+        sku = str(row["Instance"]).upper().strip()
         specs[sku] = {
-            "RAM_GB":          float(row["MemorySizeGB"])   if pd.notna(row["MemorySizeGB"])   else 0.0,
-            "vCPUs":           float(row["vCores"])         if pd.notna(row["vCores"])         else 0.0,
+            "RAM_GB":          float(row["MemorySizeGB"])    if pd.notna(row["MemorySizeGB"])    else 0.0,
+            "vCPUs":           float(row["vCores"])          if pd.notna(row["vCores"])          else 0.0,
             "ConnectionLimit": float(row["ConnectionLimit"]) if pd.notna(row["ConnectionLimit"]) else 0.0,
-            "CostPrHour":      float(row["CostPrHour"])     if pd.notna(row["CostPrHour"])     else 0.0,
-            "Tier":            str(row["Tier"]).strip()     if pd.notna(row["Tier"])           else "",
+            "CostPrHour":      float(row["CostPrHour"])      if pd.notna(row["CostPrHour"])      else 0.0,
+            "Tier":            str(row["Tier"]).strip()      if pd.notna(row["Tier"])            else "",
         }
 
-    # Tier order: Standard + NVMe only (Low-CPU handled separately)
-    # Filter out Low-CPU, Burstable to keep clean ordering
+    # ordered_tiers: exclude Low-CPU only (Low-CPU handled separately)
+    # Includes Standard, NVMe and any other sizing tier
     ordered = sorted(
-        [s for s in specs
-         if specs[s].get("Tier", "").upper() in ("STANDARD", "NVME")],
+        [s for s in specs if "LOW-CPU" not in specs[s].get("Tier", "").upper()],
         key=lambda sku: (specs[sku]["RAM_GB"], specs[sku]["vCPUs"])
     )
     return specs, ordered
@@ -183,12 +196,11 @@ def tier_index(sku: str, ordered_tiers: list[str]) -> int:
 
 
 def find_low_cpu_sku(standard_sku: str, specs: dict, provider: str, region: str) -> str | None:
-    """Find cheapest Low-CPU SKU with same RAM as standard_sku.
-    Note: specs already filtered by provider/region from SQL query.
-    Provider/Region check removed — not stored in specs dict.
+    """
+    Find cheapest Low-CPU SKU with same RAM as standard_sku.
+    specs is already filtered by provider/region from SQL — no extra check needed.
     """
     rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
-
     low_cpu_skus = [
         s for s in specs
         if  specs[s].get("RAM_GB")           == rec_ram
@@ -199,28 +211,41 @@ def find_low_cpu_sku(standard_sku: str, specs: dict, provider: str, region: str)
     return min(low_cpu_skus, key=lambda s: specs[s].get("CostPrHour", 0.0))
 
 
+def find_nvme_sku(standard_sku: str, specs: dict) -> str | None:
+    """
+    Find NVMe SKU with same RAM as standard_sku.
+    Used when connections are high — NVMe handles more IOPS/connections.
+    specs is already filtered by provider/region from SQL.
+    """
+    rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
+    nvme_skus = [
+        s for s in specs
+        if  specs[s].get("RAM_GB")           == rec_ram
+        and "NVME" in specs[s].get("Tier", "").upper()
+    ]
+    if not nvme_skus:
+        return None
+    return min(nvme_skus, key=lambda s: specs[s].get("CostPrHour", 0.0))
+
+
 # ===========================================================================
 # 4. TREND + SEASONALITY
 # ===========================================================================
 
-
 def _trend(df: pd.DataFrame, feature: str) -> list[str]:
     if df.empty or feature not in df.columns:
         return ["No trend"]
-
     weekly = df.resample("W").quantile(0.95)
     if len(weekly) < 2:
         return ["No trend"]
-
     trend_status = []
     for i in range(len(weekly) - 1):
-        pair = weekly.iloc[i : i + 2][feature].fillna(0)
-        y = pair.values
-        x = np.arange(len(y))
+        pair  = weekly.iloc[i : i + 2][feature].fillna(0)
+        y     = pair.values
+        x     = np.arange(len(y))
         if len(y) < 2 or np.all(np.isnan(y)):
             trend_status.append("No trend")
             continue
-        # Simple linear regression slope
         slope = np.polyfit(x, y, 1)[0]
         if slope > 0:
             trend_status.append("Increasing")
@@ -244,17 +269,13 @@ def _onseasonality(seasonality: pd.DataFrame, start_date: str, end_date: str, sk
     x["_datetime"] = pd.to_datetime(x["Date"]) + pd.to_timedelta(x["Hour"], unit="h")
     if x[x["Action"] == sku].empty:
         return "Empty"
-
     date_range = pd.date_range(start=start_date, end=f"{end_date} 23:59:00", freq="h")
-    hrs_range = _build_hour_range(date_range, hr_type, business_hour, on_start, off_end)
-
+    hrs_range  = _build_hour_range(date_range, hr_type, business_hour, on_start, off_end)
     df_l1 = x[x["Action"] == sku].set_index("_datetime").reindex(hrs_range, fill_value=0).reset_index()
     df_l1.columns = ["_datetime", "Date", "Hour", "Action", "_count"]
     df_l1 = df_l1[["_datetime", "_count"]].set_index("_datetime")
-
     hourly = int((df_l1.groupby(df_l1.index.hour).quantile(0.9)["_count"] >= 1).any())
-    daily = int((df_l1.groupby(df_l1.index.date).quantile(0.9)["_count"].sum() > 1))
-
+    daily  = int((df_l1.groupby(df_l1.index.date).quantile(0.9)["_count"].sum() > 1))
     if hourly and daily:
         return "Seasonality : Hourly,Daily"
     if hourly:
@@ -268,19 +289,16 @@ def _onseasonality(seasonality: pd.DataFrame, start_date: str, end_date: str, sk
 # 5. CLUSTERING
 # ===========================================================================
 
-
 def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> pd.DataFrame:
-    df = data.copy()
+    df    = data.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df["Week"] = df["Date"].dt.isocalendar().week
-
-    mt = metric_type
+    mt     = metric_type
     result = []
 
     for week, group in df.groupby("Week"):
         if len(group) < 3:
             continue
-
         level2 = group[[f"{mt}MaxP95", f"{mt}Max", f"{mt}AvgP95"]].mul(4)
         level2.columns = [f"{mt}MaxP952level", f"{mt}Max2level", f"{mt}AvgP952level"]
         k2 = KMeans(n_clusters=3, random_state=42)
@@ -306,7 +324,7 @@ def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> 
     def assign_cluster(row: pd.Series) -> int:
         c2_ok = (
             row.get(f"{mt}MaxP952level", 101) < 100
-            and row.get(f"{mt}Max2level", 101) < 100
+            and row.get(f"{mt}Max2level",    101) < 100
             and row.get(f"{mt}AvgP952level", 101) < 100
         )
         c1_ok = (
@@ -327,7 +345,6 @@ def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> 
 # 6. RECOMMENDATIONS
 # ===========================================================================
 
-
 def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, ordered_tiers: list[str]) -> list | None:
     if data.empty:
         return None
@@ -335,15 +352,12 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
     mt = metric_type
     df = data.copy()
 
-    # MongoDB thresholds (aligned to new 5-min proc outputs)
-    # For CPU: uses CpuMaxGt50 / CpuMaxGt25
-    # For Memory: derive from MemResidentMaxPct when explicit counters do not exist
     if mt == "Mem":
         if "MemMaxGt50" not in df.columns:
             df["MemMaxGt50"] = (df["MemResidentMaxPct"] > 50).astype(int)
         if "MemMaxGt25" not in df.columns:
             df["MemMaxGt25"] = (df["MemResidentMaxPct"] > 25).astype(int)
-        df["MemMax"] = df["MemResidentMaxPct"]
+        df["MemMax"]    = df["MemResidentMaxPct"]
         df["MemMaxP95"] = df.get("MemResidentP95Pct", df["MemResidentMaxPct"])
         df["MemAvgP95"] = df.get("MemResidentAvgPct", df["MemResidentMaxPct"])
 
@@ -378,7 +392,9 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
         return [(actual_sku, 0, "Insufficient data for clustering")]
 
     trend_df = df.copy()
-    trend_df["_datetime"] = pd.to_datetime(trend_df["Date"].astype(str) + " " + trend_df["Hour"].astype(str) + ":00:00")
+    trend_df["_datetime"] = pd.to_datetime(
+        trend_df["Date"].astype(str) + " " + trend_df["Hour"].astype(str) + ":00:00"
+    )
     trend_df.set_index("_datetime", inplace=True)
     trend_status = _trend(trend_df[[f"{mt}MaxP95", f"{mt}AvgP95", gt50]], gt50)
 
@@ -386,22 +402,18 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
     if current_idx == -1:
         return [(actual_sku, 0, "Unknown tier")]
 
-    weekly_actions = []
-    # Peak value — distinguish genuine high load vs tiny increasing trend.
-    # Use the 95th percentile, NOT max(): a single transient spike (backup,
-    # index build, restart) must not push a genuinely idle cluster to Upsize.
+    # Peak value: use P95 of P95 values — avoids single spike triggering ScaleUp
     peak_val = _safe_quantile(df[f"{mt}MaxP95"], 0.95) if f"{mt}MaxP95" in df.columns else 0.0
 
+    weekly_actions = []
     for i, (_, row) in enumerate(weekly.iterrows()):
         a1 = int(row["Action1"])
         ts = trend_status[i - 1] if i > 0 and i - 1 < len(trend_status) else "No trend"
 
         if ts == "Increasing" or a1 == 3:
-            if peak_val > 80:
-                # Fix 1: Genuinely high load -> scale UP one tier
+            if peak_val > 80:   # Genuinely high load → ScaleUp
                 target_idx = min(len(ordered_tiers) - 1, current_idx + 1)
-            else:
-                # Small trend on tiny values -> stay current
+            else:               # Small trend on low values → stay current
                 target_idx = current_idx
             status = 3
         elif a1 == 1:
@@ -413,27 +425,23 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
 
         weekly_actions.append((status, ordered_tiers[target_idx]))
 
-    # Fix 2: Only treat status=3 as ScaleUp when peak is genuinely high
     if any(s == 3 for s, _ in weekly_actions) and peak_val > 80:
-        final_idx = min(len(ordered_tiers) - 1, current_idx + 1)
+        final_idx = min(len(ordered_tiers) - 1, current_idx + 1)  # Upsize 1 step
     elif all(s == 1 for s, _ in weekly_actions):
-        final_idx = max(0, current_idx - 2)
+        final_idx = max(0, current_idx - 1)  # Downsize 1 step only (conservative)
     else:
-        final_idx = max(0, current_idx - 1)
+        final_idx = max(0, current_idx - 1)  # Downsize 1 step
 
-    final_sku = ordered_tiers[final_idx]
-    return [(final_sku, final_idx, "")]
+    return [(ordered_tiers[final_idx], final_idx, "")]
 
 
 def connections_recommendation(data: pd.DataFrame, actual_sku: str, ordered_tiers: list[str], specs: dict) -> tuple[str, str]:
     if data.empty:
         return actual_sku, ""
-
     max_conn_pct = _safe_quantile(data["ConnUtilizationPct"], 0.95) if "ConnUtilizationPct" in data.columns else 0.0
-    current_idx = tier_index(actual_sku, ordered_tiers)
+    current_idx  = tier_index(actual_sku, ordered_tiers)
     if current_idx == -1:
         return actual_sku, ""
-
     if max_conn_pct < 35:
         return ordered_tiers[max(0, current_idx - 1)], "Connections underutilized"
     if max_conn_pct > 80:
@@ -443,13 +451,11 @@ def connections_recommendation(data: pd.DataFrame, actual_sku: str, ordered_tier
 
 def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: int) -> str:
     """
-    Classify each component based on its recommended SKU vs current SKU:
-      val > current_idx → Intensive    (needs bigger SKU)
-      val < current_idx → Underutilized (can use smaller SKU)
-      val == current_idx → Optimal     (current SKU is right)
+    val > current_idx → Intensive    (needs bigger SKU)
+    val < current_idx → Underutilized (can use smaller SKU)
+    val == current_idx → Optimal     (current SKU is right)
     """
     components = {"CPU": cpu_idx, "Memory": mem_idx, "Connections": conn_idx}
-
     intensive, underutilized, optimal = [], [], []
     for name, val in components.items():
         if val > current_idx:
@@ -458,7 +464,6 @@ def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: in
             underutilized.append(name)
         else:
             optimal.append(name)
-
     parts = []
     if intensive:
         parts.append(", ".join(intensive) + " Intensive")
@@ -470,9 +475,8 @@ def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: in
 
 
 # ===========================================================================
-# 7. SQL BUILDERS (NEW 5-MIN TABLE)
+# 7. SQL BUILDERS
 # ===========================================================================
-
 
 def build_cluster_inventory_query(start_date: str, end_date: str) -> str:
     return f"""
@@ -491,45 +495,38 @@ def build_cluster_inventory_query(start_date: str, end_date: str) -> str:
     """
 
 
-def build_cluster_metrics_query(cluster_key: int, start_date: str, end_date: str, day_type: str, business_hour: str, business_hour1: str) -> str:
+def build_cluster_metrics_query(cluster_key: int, start_date: str, end_date: str,
+                                 day_type: str, business_hour: str, business_hour1: str) -> str:
     return f"""
         SELECT
-            ClusterKey,
-            ClusterName,
-            InstanceSize,
-            ProviderName,
-            RegionName,
-            _date AS [Date],
-            _hour AS [Hour],
+            ClusterKey, ClusterName, InstanceSize,
+            ProviderName, RegionName,
+            _date  AS [Date],
+            _hour  AS [Hour],
             [type] AS [DayType],
             CASE WHEN [type] = 'Weekend' THEN 'Weekend' ELSE businessHour END AS HourType,
-
-            MAX(CpuAvg)      AS CpuAvg,
-            MAX(CpuAvgP95)   AS CpuAvgP95,
-            MAX(CpuMax)      AS CpuMax,
-            MAX(CpuMaxP95)   AS CpuMaxP95,
-            MAX(CpuMaxGt50)  AS CpuMaxGt50,
-            MAX(CpuMaxGt25)  AS CpuMaxGt25,
-            MAX(CpuMaxGt10)  AS CpuMaxGt10,
-
+            MAX(CpuAvg)             AS CpuAvg,
+            MAX(CpuAvgP95)          AS CpuAvgP95,
+            MAX(CpuMax)             AS CpuMax,
+            MAX(CpuMaxP95)          AS CpuMaxP95,
+            MAX(CpuMaxGt50)         AS CpuMaxGt50,
+            MAX(CpuMaxGt25)         AS CpuMaxGt25,
+            MAX(CpuMaxGt10)         AS CpuMaxGt10,
             MAX(MemResidentMax)     AS MemResidentMax,
             MAX(MemResidentAvg)     AS MemResidentAvg,
             MAX(MemResidentMaxPct)  AS MemResidentMaxPct,
             MAX(MemResidentAvgPct)  AS MemResidentAvgPct,
             MAX(MemResidentP95Pct)  AS MemResidentP95Pct,
-
-            MAX(NetInAvg)      AS NetInAvg,
-            MAX(NetInMax)      AS NetInMax,
-            MAX(NetOutAvg)     AS NetOutAvg,
-            MAX(NetOutMax)     AS NetOutMax,
-            MAX(NetRequestsMax) AS NetRequestsMax,
-
-            SUM(ConnectionsMax) AS ConnectionsMax,
-            SUM(ConnectionsAvg) AS ConnectionsAvg,
+            MAX(NetInAvg)           AS NetInAvg,
+            MAX(NetInMax)           AS NetInMax,
+            MAX(NetOutAvg)          AS NetOutAvg,
+            MAX(NetOutMax)          AS NetOutMax,
+            MAX(NetRequestsMax)     AS NetRequestsMax,
+            SUM(ConnectionsMax)     AS ConnectionsMax,
+            SUM(ConnectionsAvg)     AS ConnectionsAvg,
             MAX(ConnUtilizationPct) AS ConnUtilizationPct,
-
-            MAX(OpcQueryMax)    AS OpcQueryMax,
-            MAX(OpcInsertMax)   AS OpcInsertMax
+            MAX(OpcQueryMax)        AS OpcQueryMax,
+            MAX(OpcInsertMax)       AS OpcInsertMax
         FROM [Metrics].[MongoDBRightsizingAggregated5Min]
         WHERE _date BETWEEN '{start_date}' AND '{end_date}'
           AND ClusterKey = {cluster_key}
@@ -547,33 +544,32 @@ def build_cluster_metrics_query(cluster_key: int, start_date: str, end_date: str
 # 8. EFFICIENCY CALCULATION
 # ===========================================================================
 
-
 def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: str, specs: dict) -> tuple:
-    avg_cpu  = _safe_mean(data["CpuAvg"])                    if "CpuAvg"             in data.columns else 0.0
-    max_cpu  = _safe_max(data["CpuMax"])                     if "CpuMax"             in data.columns else 0.0
-    avg_mem  = _safe_mean(data["MemResidentAvgPct"])          if "MemResidentAvgPct"  in data.columns else 0.0
-    max_mem  = _safe_max(data["MemResidentMaxPct"])           if "MemResidentMaxPct"  in data.columns else 0.0
-    avg_conn = _safe_mean(data["ConnUtilizationPct"])         if "ConnUtilizationPct" in data.columns else 0.0
+    avg_cpu  = _safe_mean(data["CpuAvg"])             if "CpuAvg"             in data.columns else 0.0
+    max_cpu  = _safe_max(data["CpuMax"])              if "CpuMax"             in data.columns else 0.0
+    avg_mem  = _safe_mean(data["MemResidentAvgPct"])  if "MemResidentAvgPct"  in data.columns else 0.0
+    max_mem  = _safe_max(data["MemResidentMaxPct"])   if "MemResidentMaxPct"  in data.columns else 0.0
+    avg_conn = _safe_mean(data["ConnUtilizationPct"]) if "ConnUtilizationPct" in data.columns else 0.0
 
     current_efficiency = json.dumps({
-        "CpuAvgPct":  round(avg_cpu,  2),
-        "CpuMaxPct":  round(max_cpu,  2),
-        "MemAvgPct":  round(avg_mem,  2),
-        "MemMaxPct":  round(max_mem,  2),
-        "ConnPct":    round(avg_conn, 2),
+        "CpuAvgPct": round(avg_cpu,  2),
+        "CpuMaxPct": round(max_cpu,  2),
+        "MemAvgPct": round(avg_mem,  2),
+        "MemMaxPct": round(max_mem,  2),
+        "ConnPct":   round(avg_conn, 2),
     })
 
     current_ram  = specs.get(actual_sku,      {}).get("RAM_GB",          0.0)
     rec_ram      = specs.get(recommended_sku, {}).get("RAM_GB",          0.0)
     current_conn = specs.get(actual_sku,      {}).get("ConnectionLimit",  0.0)
     rec_conn     = specs.get(recommended_sku, {}).get("ConnectionLimit",  0.0)
-    current_vcpu = specs.get(actual_sku,      {}).get("vCPUs",            0)
-    rec_vcpu     = specs.get(recommended_sku, {}).get("vCPUs",            0)
+    current_vcpu = specs.get(actual_sku,      {}).get("vCPUs",            0.0)
+    rec_vcpu     = specs.get(recommended_sku, {}).get("vCPUs",            0.0)
 
-    proj_mem     = round((avg_mem  * current_ram  / rec_ram)  if rec_ram  > 0 else 0.0,     2)
-    proj_conn    = round((avg_conn * current_conn / rec_conn) if rec_conn > 0 else 0.0,     2)
     proj_cpu_avg = round((avg_cpu  * current_vcpu / rec_vcpu) if rec_vcpu > 0 else avg_cpu, 2)
     proj_cpu_max = round((max_cpu  * current_vcpu / rec_vcpu) if rec_vcpu > 0 else max_cpu, 2)
+    proj_mem     = round((avg_mem  * current_ram  / rec_ram)  if rec_ram  > 0 else 0.0,     2)
+    proj_conn    = round((avg_conn * current_conn / rec_conn) if rec_conn > 0 else 0.0,     2)
 
     within_efficiency = json.dumps({
         "ProjectedCpuAvgPct": proj_cpu_avg,
@@ -590,13 +586,15 @@ def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: s
 # 9. MAIN PER-CLUSTER PIPELINE
 # ===========================================================================
 
+def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
+                    provider_name: str, region_name: str, config: dict,
+                    metacache: dict) -> dict | None:
 
-def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, provider_name: str, region_name: str, config: dict, metacache: dict) -> dict | None:
     start_date = config["StartDate"]
-    end_date = config["EndDate"]
-    day_type = config["Type"]
-    bh = config["BusinessHour"]
-    bh1 = config["BusinessHour1"]
+    end_date   = config["EndDate"]
+    day_type   = config["Type"]
+    bh         = config["BusinessHour"]
+    bh1        = config["BusinessHour1"]
 
     meta_key = (str(provider_name).upper(), str(region_name).upper())
     if meta_key not in metacache:
@@ -605,7 +603,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
     specs, ordered_tiers = metacache[meta_key]
 
     if not ordered_tiers:
-        print(f"[DEBUG] No ordered_tiers found for provider={provider_name}, region={region_name}. Skipping cluster {cluster_name}.")
+        print(f"[DEBUG] No ordered_tiers for provider={provider_name}, region={region_name}. Skipping {cluster_name}.")
         return None
 
     actual_sku = str(instance_size).upper()
@@ -614,65 +612,62 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
         return None
 
     # Filter ordered_tiers to same tier as current SKU
-    # NVMe cluster → NVMe options only
-    # Standard cluster → Standard options only
-    current_tier = specs.get(actual_sku, {}).get("Tier", "Standard").upper()
-    ordered_tiers = [
-        s for s in ordered_tiers
-        if specs[s].get("Tier", "").upper() == current_tier
-    ]
+    # NVMe cluster → NVMe options only | Standard cluster → Standard options only
+    current_tier = specs.get(actual_sku, {}).get("Tier", "").upper()
+    if current_tier:
+        same_tier = [s for s in ordered_tiers if specs[s].get("Tier", "").upper() == current_tier]
+        if len(same_tier) >= 2:
+            ordered_tiers = same_tier
     if actual_sku not in ordered_tiers:
-        print(f"[DEBUG] SKU {actual_sku} tier={current_tier} has no matching tiers. Skipping.")
+        print(f"[DEBUG] SKU {actual_sku} not in ordered_tiers after tier filter. Skipping.")
         return None
 
-    sql = build_cluster_metrics_query(cluster_key, start_date, end_date, day_type, bh, bh1)
+    sql  = build_cluster_metrics_query(cluster_key, start_date, end_date, day_type, bh, bh1)
     data = fetch_data(sql)
     if data.empty:
-        print(f"[DEBUG] No metrics data for cluster {cluster_name} (key={cluster_key}) in date range {start_date} to {end_date}.")
+        print(f"[DEBUG] No metrics for cluster {cluster_name} (key={cluster_key}). Skipping.")
         return None
 
     data["InstanceSize"] = actual_sku
 
-    cpu_rec = recommendations("Cpu", data, actual_sku, ordered_tiers)
-    mem_rec = recommendations("Mem", data, actual_sku, ordered_tiers)
+    cpu_rec               = recommendations("Cpu", data, actual_sku, ordered_tiers)
+    mem_rec               = recommendations("Mem", data, actual_sku, ordered_tiers)
     conn_sku, conn_comment = connections_recommendation(data, actual_sku, ordered_tiers, specs)
 
     cpu_sku = cpu_rec[0][0] if cpu_rec else actual_sku
     mem_sku = mem_rec[0][0] if mem_rec else actual_sku
 
     current_idx = tier_index(actual_sku, ordered_tiers)
-    cpu_idx = tier_index(cpu_sku, ordered_tiers)
-    mem_idx = tier_index(mem_sku, ordered_tiers)
-    conn_idx = tier_index(conn_sku, ordered_tiers)
+    cpu_idx     = tier_index(cpu_sku,    ordered_tiers)
+    mem_idx     = tier_index(mem_sku,    ordered_tiers)
+    conn_idx    = tier_index(conn_sku,   ordered_tiers)
 
     overall_idx = max(cpu_idx, mem_idx, conn_idx)
     overall_sku = ordered_tiers[overall_idx]
 
-    # ── CONNECTION-ONLY UPSIZE → NOCHANGE ────────────────────────────────────
-    # If ONLY connections drive the upsize (CPU and Memory are fine),
-    # keep same SKU — connections can be fixed from application side
-    if (conn_idx > current_idx
-            and cpu_idx  <= current_idx
-            and mem_idx  <= current_idx):
+    # Connection-only upsize → NoChange
+    # Connections can be fixed from app side (connection pooling)
+    # Suggest NVMe alternative for better IOPS/connection handling
+    conn_only_upsize = (conn_idx > current_idx and cpu_idx <= current_idx and mem_idx <= current_idx)
+    if conn_only_upsize:
         overall_idx = current_idx
         overall_sku = actual_sku
-        print(f"[DEBUG] Connection-only upsize skipped for {cluster_name} — recommend connection pooling review")
-    # ── END CONNECTION-ONLY CHECK ─────────────────────────────────────────────
+        print(f"[DEBUG] Connection-only upsize skipped for {cluster_name}")
 
-    current_cost = specs.get(actual_sku, {}).get("CostPrHour", 0.0)
-    recommended_cost = specs.get(overall_sku, {}).get("CostPrHour", 0.0)
-    hours_in_month = _hours_in_range(start_date, end_date)
-    spend_30_days = current_cost * hours_in_month
+    current_cost           = specs.get(actual_sku,   {}).get("CostPrHour", 0.0)
+    recommended_cost       = specs.get(overall_sku,  {}).get("CostPrHour", 0.0)
+    hours_in_month         = _hours_in_range(start_date, end_date)
+    spend_30_days          = current_cost * hours_in_month
     estimated_monthly_savings = (current_cost - recommended_cost) * hours_in_month
 
-    comment = component_comment(cpu_idx, mem_idx, conn_idx, current_idx)
-    # Override comment for connection-only case
-    if (conn_idx > current_idx
-            and cpu_idx  <= current_idx
-            and mem_idx  <= current_idx):
-        comment = "High Connections — Review Connection Pooling"
+    comment = "High Connections — Review Connection Pooling" if conn_only_upsize \
+              else component_comment(cpu_idx, mem_idx, conn_idx, current_idx)
 
-    misc_comment = f"CPU:{cpu_rec[0][2] if cpu_rec else ''} / Mem:{mem_rec[0][2] if mem_rec else ''} / Connections:{conn_comment}"
+    misc_comment = (
+        f"CPU:{cpu_rec[0][2] if cpu_rec else ''} / "
+        f"Mem:{mem_rec[0][2] if mem_rec else ''} / "
+        f"Connections:{conn_comment}"
+    )
 
     hour_type            = "Weekend" if day_type == "Weekend" else bh
     avg_cpu_max          = _safe_mean(data["CpuMax"])                      if "CpuMax"             in data.columns else 0.0
@@ -682,30 +677,34 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
     action               = _action_label(actual_sku, overall_sku, ordered_tiers)
     audit_utc            = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # ── LOW-CPU ALTERNATIVE ───────────────────────────────────────────────────
-    prov    = str(provider_name).upper()
-    reg     = str(region_name).upper()
+    # Low-CPU alternative (for Downsize / Upsize)
+    prov         = str(provider_name).upper()
+    reg          = str(region_name).upper()
+    low_cpu_sku  = None
+    nvme_sku     = None
 
-    low_cpu_sku  = find_low_cpu_sku(overall_sku, specs, prov, reg)
-    low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
+    if conn_only_upsize:
+        # Connection-only → suggest NVMe (better IOPS) instead of Low-CPU
+        nvme_sku = find_nvme_sku(overall_sku, specs)
+        recommended_sku_display = f"{overall_sku}, {nvme_sku}" if nvme_sku else overall_sku
+        low_cpu_savings = 0.0
+    else:
+        # Normal Downsize / Upsize → suggest Low-CPU alternative
+        low_cpu_sku  = find_low_cpu_sku(overall_sku, specs, prov, reg)
+        low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
 
-    # Check: don't suggest Low-CPU if peak CPU is high
-    if low_cpu_sku and peak_cpu_max > 80:
-        low_cpu_sku = None
-        low_cpu_cost = 0.0
+        # Skip Low-CPU if peak CPU is high (fewer vCores would be risky)
+        if low_cpu_sku and peak_cpu_max > 50:
+            low_cpu_sku  = None
+            low_cpu_cost = 0.0
 
-    low_cpu_savings = round(
-        (current_cost - low_cpu_cost) * hours_in_month, 2
-    ) if low_cpu_sku and low_cpu_cost < current_cost else 0.0
+        low_cpu_savings = round(
+            (current_cost - low_cpu_cost) * hours_in_month, 2
+        ) if low_cpu_sku and low_cpu_cost < current_cost else 0.0
 
-    # RecommendedSku = "M50, M50-low-CPU" if Low-CPU available
-    recommended_sku_display = (
-        f"{overall_sku}, {low_cpu_sku}" if low_cpu_sku else overall_sku
-    )
-    # ── END LOW-CPU ───────────────────────────────────────────────────────────
+        recommended_sku_display = f"{overall_sku}, {low_cpu_sku}" if low_cpu_sku else overall_sku
 
-    print(f"[DEBUG] Recommendation for cluster {cluster_name}: overall={overall_sku}, "
-          f"low_cpu={low_cpu_sku}, cpu={cpu_sku}, mem={mem_sku}, conn={conn_sku}")
+    print(f"[DEBUG] {cluster_name}: action={action}, sku={recommended_sku_display}, low_cpu={low_cpu_sku}")
 
     eff = calculate_efficiency(data, actual_sku, overall_sku, specs)
 
@@ -723,17 +722,17 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str, pro
         "PeakCpuMax":              peak_cpu_max,
         "MemUtilizationPct":       mem_utilization_pct,
         "ConnUtilizationPct":      conn_utilization_pct,
-        "RecommendedSku":          recommended_sku_display,   # "M50, M50-low-CPU"
+        "RecommendedSku":          recommended_sku_display,
         "RecommendedCostPrHour":   recommended_cost,
         "EstimatedMonthlySavings": estimated_monthly_savings,
         "Comment":                 comment,
         "MiscComment":             misc_comment,
         "CurrentEfficiency":       eff[0],
         "WithinEfficiency":        eff[1],
-        "LowCpuEfficiency":        None,                       # populated by stored proc
+        "LowCpuEfficiency":        None,          # populated by usp_MongoDBRightsizingEfficiency
         "Spend30days":             spend_30_days,
         "WithinFamilySavings":     estimated_monthly_savings,
-        "LowCpuSku":               low_cpu_sku,               # e.g. "M50-low-CPU"
+        "LowCpuSku":               low_cpu_sku,
         "LowCpuSavings":           low_cpu_savings,
         "Action":                  action,
         "AuditUtc":                audit_utc,
@@ -772,10 +771,10 @@ INSERT_COLUMNS = [
 
 
 def call_stored_proc(proc_name: str, month: str):
-    """Call a stored procedure with @LastMonth parameter"""
+    """Call stored procedure with @LastMonth — autocommit required for Synapse DDL."""
     try:
         conn = connect_to_db()
-        conn.autocommit = True   # DDL inside proc needs no transaction
+        conn.autocommit = True    # DDL inside proc (DROP/CREATE TABLE) needs no transaction
         cur  = conn.cursor()
         print(f"[DEBUG] Calling {proc_name} for month {month}...")
         cur.execute(f"EXEC {proc_name} @LastMonth = ?", month)
@@ -792,12 +791,12 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
     print(f"[DEBUG] Starting upsert of {total} rows...")
 
     for start in range(0, total, chunk_size):
-        chunk = df.iloc[start: start + chunk_size].copy()
+        chunk = df.iloc[start : start + chunk_size].copy()
         conn  = connect_to_db()
         cur   = conn.cursor()
 
         for _, row in chunk.iterrows():
-            # Step 1: Delete existing row for this key (safe - only deletes 1 row)
+            # Delete existing row for this key
             cur.execute("""
                 DELETE FROM [Metrics].[MongoDBRightsizingRecommendations]
                 WHERE Month      = ?
@@ -806,9 +805,8 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
                 AND   HourType   = ?
             """, row["Month"], row["ClusterKey"], row["DayType"], row["HourType"])
 
-            # Step 2: Insert fresh row
-            cur.execute(INSERT_SQL,
-                tuple(row[col] for col in INSERT_COLUMNS))
+            # Insert fresh row
+            cur.execute(INSERT_SQL, tuple(row[col] for col in INSERT_COLUMNS))
 
         conn.commit()
         cur.close()
@@ -823,8 +821,6 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
 # ===========================================================================
 
 if __name__ == "__main__":
-    today = date.today()
-
     # Auto-detect date range from aggregated table
     date_sql = """
         SELECT
@@ -832,9 +828,9 @@ if __name__ == "__main__":
             MAX(_date) AS MaxDate
         FROM [Metrics].[MongoDBRightsizingAggregated5Min]
     """
-    date_df = fetch_data(date_sql)
-    start_dt = pd.to_datetime(date_df["MinDate"].iloc[0])
-    end_dt   = pd.to_datetime(date_df["MaxDate"].iloc[0])
+    date_df    = fetch_data(date_sql)
+    start_dt   = pd.to_datetime(date_df["MinDate"].iloc[0])
+    end_dt     = pd.to_datetime(date_df["MaxDate"].iloc[0])
 
     months      = [end_dt.strftime("%Y-%m")]
     start_dates = [start_dt.strftime("%Y-%m-%d")]
@@ -842,9 +838,9 @@ if __name__ == "__main__":
 
     print(f"[DEBUG] Date range: {start_dates[0]} to {end_dates[0]} | Month: {months[0]}")
 
-    types = ["Weekday", "Weekday", "Weekend"]
-    business_hours  = ["BusinessHours", "NonBusinessHours", "Weekend"]
-    business_hours1 = ["BusinessHours", "NonBusinessHours", "Weekend"]
+    types           = ["Weekday",       "Weekday",           "Weekend"]
+    business_hours  = ["BusinessHours", "NonBusinessHours",  "Weekend"]
+    business_hours1 = ["BusinessHours", "NonBusinessHours",  "Weekend"]
 
     month_dict = {}
     for month, start, end in zip(months, start_dates, end_dates):
@@ -853,11 +849,8 @@ if __name__ == "__main__":
             for t, bh, bh1 in zip(types, business_hours, business_hours1)
         ]
 
-    columns = INSERT_COLUMNS.copy()
-
-    out_df = pd.DataFrame(columns=columns)
+    out_df    = pd.DataFrame(columns=INSERT_COLUMNS)
     metacache = {}
-
 
     for month, configs in month_dict.items():
         print(f"[DEBUG] Processing month: {month}")
@@ -865,64 +858,51 @@ if __name__ == "__main__":
             print(f"[DEBUG] Config: {config}")
             _count(config["StartDate"], config["EndDate"])
 
-            inv_sql = build_cluster_inventory_query(config["StartDate"], config["EndDate"])
-            clusters = fetch_data(inv_sql)
-            print(f"[DEBUG] Cluster inventory returned {clusters.shape[0]} rows.")
+            clusters = fetch_data(build_cluster_inventory_query(config["StartDate"], config["EndDate"]))
+            print(f"[DEBUG] Cluster inventory: {clusters.shape[0]} rows.")
             if clusters.empty:
-                print(f"[DEBUG] No clusters found for date range {config['StartDate']} to {config['EndDate']}.")
                 continue
 
             for _, row in clusters.iterrows():
-                cluster_key = int(row["ClusterKey"])
-                cluster_name = str(row["ClusterName"])
+                cluster_key   = int(row["ClusterKey"])
+                cluster_name  = str(row["ClusterName"])
                 instance_size = str(row["InstanceSize"])
                 provider_name = str(row.get("ProviderName", ""))
-                region_name = str(row.get("RegionName", ""))
-                org_key = row.get("OrgKey", "")
-                project_key = row.get("ProjectKey", "")
+                region_name   = str(row.get("RegionName",   ""))
+                org_key       = row.get("OrgKey",      "")
+                project_key   = row.get("ProjectKey",  "")
 
                 print(f"[DEBUG] Processing cluster: {cluster_name} (key={cluster_key})")
                 result = process_cluster(
-                    cluster_key,
-                    cluster_name,
-                    instance_size,
-                    provider_name,
-                    region_name,
-                    config,
-                    metacache,
+                    cluster_key, cluster_name, instance_size,
+                    provider_name, region_name, config, metacache,
                 )
                 if result is None:
-                    print(f"[DEBUG] No recommendation generated for cluster {cluster_name} (key={cluster_key}).")
+                    print(f"[DEBUG] No recommendation for {cluster_name} (key={cluster_key}).")
                     continue
 
-                result["Month"] = month
-                result["OrgName"] = row.get("OrgName") or org_key
-                result["ProjectKey"] = project_key
+                result["Month"]        = month
+                result["OrgName"]      = row.get("OrgName") or org_key
+                result["ProjectKey"]   = project_key
                 result["ProviderName"] = provider_name
-                result["RegionName"] = region_name
+                result["RegionName"]   = region_name
 
                 out_df = pd.concat([out_df, pd.DataFrame([result])], ignore_index=True)
 
     if not out_df.empty:
         print(f"Total recommendations: {len(out_df)}")
-        print(out_df[["ClusterName", "CurrentSku", "RecommendedSku", "Comment"]].to_string())
+        print(out_df[["ClusterName", "CurrentSku", "RecommendedSku", "Action", "Comment"]].to_string())
 
         # Step 1: Insert recommendations
         upsert_in_chunks(out_df)
-        print("Results upserted into [Metrics].[MongoDBRightsizingRecommendations].")
+        print("Recommendations upserted into [Metrics].[MongoDBRightsizingRecommendations].")
 
-        # Step 2: Run SimulatedMetrics proc
-        call_stored_proc(
-            "[Metrics].[usp_MongoDBRightsizingSimulatedMetrics]",
-            months[0]
-        )
+        # Step 2: Simulated metrics
+        call_stored_proc("[Metrics].[usp_MongoDBRightsizingSimulatedMetrics]", months[0])
 
-        # Step 3: Run Efficiency proc
-        call_stored_proc(
-            "[Metrics].[usp_MongoDBRightsizingEfficiency]",
-            months[0]
-        )
+        # Step 3: Efficiency
+        call_stored_proc("[Metrics].[usp_MongoDBRightsizingEfficiency]", months[0])
 
-        print("All done — Recommendations, SimulatedMetrics and Efficiency updated.")
+        print("Done — Recommendations, SimulatedMetrics and Efficiency all updated.")
     else:
         print("No recommendations generated.")
