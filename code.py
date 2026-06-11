@@ -1,33 +1,23 @@
--- Check duplicates in aggregated table
-SELECT
-    ClusterKey,
-    _date,
-    _hour,
-    [type],
-    businessHour,
-    COUNT(*) AS RowCount
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-GROUP BY ClusterKey, _date, _hour, [type], businessHour
-HAVING COUNT(*) > 1
-ORDER BY RowCount DESC
+-- Step 1: Check how many rows recommendations has for June
+SELECT COUNT(*) AS RecommendationRows
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-06'
 GO
 
--- Summary
-SELECT
-    COUNT(*)                   AS TotalRows,
-    COUNT(DISTINCT CONCAT(
-        CAST(ClusterKey AS VARCHAR),
-        CAST(_date AS VARCHAR),
-        CAST(_hour AS VARCHAR),
-        [type], businessHour
-    ))                         AS UniqueRows,
-    MAX(cnt)                   AS MaxDuplicatesPerRow
+-- Step 2: Check aggregated rows for June
+SELECT COUNT(*) AS AggregatedRows
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-CROSS JOIN (
-    SELECT MAX(RowCount) AS cnt FROM (
-        SELECT COUNT(*) AS RowCount
-        FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-        GROUP BY ClusterKey, _date, _hour, [type], businessHour
-    ) x
-) y
+WHERE FORMAT(_date, 'yyyy-MM') = '2026-06'
+GO
+
+-- Step 3: SIMULATE the join - see how many rows it produces
+SELECT COUNT(*) AS SimulatedRows
+FROM [Metrics].[MongoDBRightsizingAggregated5Min] a
+INNER JOIN [Metrics].[MongoDBRightsizingRecommendations] r
+    ON  r.ClusterKey = a.ClusterKey
+    AND r.DayType    = a.[type]
+    AND r.Month      = '2026-06'
+    AND (   a.[type]    = 'Weekend'
+         OR r.HourType  = a.businessHour)
+WHERE FORMAT(a._date, 'yyyy-MM') = '2026-06'
 GO
