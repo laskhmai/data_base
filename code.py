@@ -1,23 +1,46 @@
--- Check for duplicates
+-- Check for duplicates in SimulatedMetrics
 SELECT
-    Month,
     ClusterKey,
+    ClusterName,
+    [Date],
+    [Hour],
     DayType,
     HourType,
+    CurrentSku,
     COUNT(*) AS RowCount
-FROM [Metrics].[MongoDBRightsizingRecommendations]
-GROUP BY Month, ClusterKey, DayType, HourType
+FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
+GROUP BY
+    ClusterKey, ClusterName,
+    [Date], [Hour],
+    DayType, HourType, CurrentSku
 HAVING COUNT(*) > 1
 ORDER BY RowCount DESC
+GO
 
--- Summary
+-- Summary counts
 SELECT
-    COUNT(*)                                    AS TotalRows,
-    COUNT(DISTINCT CONCAT(ClusterKey, DayType, HourType)) AS UniqueSlices,
-    MAX(cnt) AS MaxDuplicates
-FROM (
-    SELECT ClusterKey, DayType, HourType, COUNT(*) AS cnt
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    GROUP BY ClusterKey, DayType, HourType
-) x
+    COUNT(*)                    AS TotalRows,
+    COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey AS VARCHAR),
+        CAST([Date] AS VARCHAR),
+        CAST([Hour] AS VARCHAR),
+        DayType, HourType, CurrentSku
+    ))                          AS UniqueRows,
+    COUNT(*) - COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey AS VARCHAR),
+        CAST([Date] AS VARCHAR),
+        CAST([Hour] AS VARCHAR),
+        DayType, HourType, CurrentSku
+    ))                          AS DuplicateRows,
+    MAX(cnt)                    AS MaxDuplicatesPerRow
+FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
+CROSS JOIN (
+    SELECT MAX(RowCount) AS cnt
+    FROM (
+        SELECT COUNT(*) AS RowCount
+        FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
+        GROUP BY ClusterKey, [Date], [Hour],
+                 DayType, HourType, CurrentSku
+    ) x
+) y
 GO
