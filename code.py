@@ -1,14 +1,27 @@
-Expected 284 clusters
-Got 280 clusters → 4 clusters missing
-
-Possible reason:
-4 clusters may not have Weekday BusinessHours data
-in aggregated table for June 2026
-
-Check:
-SELECT ClusterName FROM aggregated
+-- Step 1: How many UNIQUE clusters are missing?
+SELECT
+    COUNT(DISTINCT ClusterKey) AS MissingClusters,
+    COUNT(DISTINCT ClusterName) AS UniqueName
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 WHERE ClusterKey NOT IN (
-    SELECT ClusterKey FROM recommendations
-    WHERE DayType='Weekday'
-    AND HourType='BusinessHours'
+    SELECT ClusterKey
+    FROM [Metrics].[MongoDBRightsizingRecommendations]
+    WHERE DayType  = 'Weekday'
+    AND   HourType = 'BusinessHours'
 )
+GO
+
+-- Step 2: What SKUs are these missing clusters on?
+SELECT DISTINCT
+    InstanceSize,
+    COUNT(DISTINCT ClusterKey) AS ClusterCount
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE ClusterKey NOT IN (
+    SELECT ClusterKey
+    FROM [Metrics].[MongoDBRightsizingRecommendations]
+    WHERE DayType  = 'Weekday'
+    AND   HourType = 'BusinessHours'
+)
+GROUP BY InstanceSize
+ORDER BY ClusterCount DESC
+GO
