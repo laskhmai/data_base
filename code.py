@@ -1,27 +1,40 @@
--- Step 1: How many UNIQUE clusters are missing?
+-- Check duplicates in aggregated table
 SELECT
-    COUNT(DISTINCT ClusterKey) AS MissingClusters,
-    COUNT(DISTINCT ClusterName) AS UniqueName
+    ClusterKey,
+    ClusterName,
+    _date,
+    _hour,
+    [type],
+    businessHour,
+    COUNT(*) AS RowCount
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterKey NOT IN (
-    SELECT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE DayType  = 'Weekday'
-    AND   HourType = 'BusinessHours'
-)
+GROUP BY
+    ClusterKey,
+    ClusterName,
+    _date,
+    _hour,
+    [type],
+    businessHour
+HAVING COUNT(*) > 1
+ORDER BY RowCount DESC
 GO
 
--- Step 2: What SKUs are these missing clusters on?
-SELECT DISTINCT
-    InstanceSize,
-    COUNT(DISTINCT ClusterKey) AS ClusterCount
+-- Summary
+SELECT
+    COUNT(*)         AS TotalRows,
+    COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey  AS VARCHAR),
+        CAST(_date       AS VARCHAR),
+        CAST(_hour       AS VARCHAR),
+        [type],
+        businessHour
+    ))               AS UniqueRows,
+    COUNT(*) - COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey  AS VARCHAR),
+        CAST(_date       AS VARCHAR),
+        CAST(_hour       AS VARCHAR),
+        [type],
+        businessHour
+    ))               AS DuplicateRows
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterKey NOT IN (
-    SELECT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE DayType  = 'Weekday'
-    AND   HourType = 'BusinessHours'
-)
-GROUP BY InstanceSize
-ORDER BY ClusterCount DESC
 GO
