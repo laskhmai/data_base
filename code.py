@@ -1,20 +1,108 @@
--- Do these 13 clusters have Weekend data in May?
+-- CHECK 1: Table counts for May
 SELECT
-    a.ClusterKey,
-    a.ClusterName,
-    a.[type],
-    COUNT(*)        AS Rows,
-    MIN(a._date)    AS From,
-    MAX(a._date)    AS To
-FROM [Metrics].[MongoDBRightsizingAggregated5Min] a
-WHERE FORMAT(a._date,'yyyy-MM') = '2026-05'
-AND   a.ClusterKey IN (
-    SELECT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE Month    = '2026-05'
-    GROUP BY ClusterKey
-    HAVING COUNT(*) < 3
+    'Aggregated'        AS TableName,
+    COUNT(*)            AS TotalRows,
+    COUNT(DISTINCT ClusterKey) AS Clusters,
+    MIN(_date)          AS DataFrom,
+    MAX(_date)          AS DataTo
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
+UNION ALL
+SELECT
+    'Recommendations',
+    COUNT(*),
+    COUNT(DISTINCT ClusterKey),
+    NULL, NULL
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-05'
+UNION ALL
+SELECT
+    'SimulatedMetrics',
+    COUNT(*),
+    COUNT(DISTINCT ClusterKey),
+    MIN([Date]),
+    MAX([Date])
+FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
+WHERE FORMAT(CAST([Date] AS DATE),'yyyy-MM') = '2026-05'
+GO
+
+-- CHECK 2: No duplicates in Recommendations
+SELECT
+    COUNT(*)  AS TotalRows,
+    COUNT(DISTINCT CONCAT(
+        Month, CAST(ClusterKey AS VARCHAR),
+        DayType, HourType
+    ))        AS UniqueRows
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-05'
+GO
+
+-- CHECK 3: No duplicates in SimulatedMetrics
+SELECT
+    COUNT(*)  AS TotalRows,
+    COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey AS VARCHAR),
+        CAST([Date] AS VARCHAR),
+        CAST([Hour] AS VARCHAR),
+        DayType, HourType, CurrentSku
+    ))        AS UniqueRows
+FROM [Metrics].[MongoDBRightsizingSimulatedMetrics]
+WHERE FORMAT(CAST([Date] AS DATE),'yyyy-MM') = '2026-05'
+GO
+
+-- CHECK 4: Known clusters for May
+SELECT
+    ClusterName,
+    DayType,
+    HourType,
+    CurrentSku,
+    RecommendedSku,
+    LowCpuSku,
+    Action,
+    ROUND(EstimatedMonthlySavings,2) AS Savings,
+    Comment
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-05'
+AND   ClusterName IN (
+    'cdr-uat',
+    'cwih-cp-mgmt-prod',
+    'consumer-interops-uat'
 )
-GROUP BY a.ClusterKey, a.ClusterName, a.[type]
-ORDER BY a.ClusterName, a.[type]
+ORDER BY ClusterName, DayType, HourType
+GO
+
+-- CHECK 5: Cost summary for May
+SELECT
+    Month,
+    Action,
+    COUNT(DISTINCT ClusterKey)             AS Clusters,
+    ROUND(SUM(Spend30days),2)              AS CurrentSpend,
+    ROUND(SUM(EstimatedMonthlySavings),2)  AS NetSavings
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month    = '2026-05'
+AND   DayType  = 'Weekday'
+AND   HourType = 'BusinessHours'
+GROUP BY Month, Action
+ORDER BY Action
+GO
+
+-- CHECK 6: Efficiency columns for May
+SELECT
+    ClusterName,
+    DayType,
+    HourType,
+    CASE WHEN CurrentEfficiency IS NOT NULL
+         THEN 'Populated' ELSE 'NULL' END AS CurrentEff,
+    CASE WHEN WithinEfficiency  IS NOT NULL
+         THEN 'Populated' ELSE 'NULL' END AS WithinEff,
+    CASE WHEN LowCpuEfficiency  IS NOT NULL
+         THEN 'Populated' ELSE 'NULL' END AS LowCpuEff
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-05'
+AND   ClusterName IN (
+    'cdr-uat',
+    'cwih-cp-mgmt-prod',
+    'consumer-interops-uat'
+)
+ORDER BY ClusterName, DayType, HourType
 GO
