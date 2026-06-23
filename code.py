@@ -1,16 +1,20 @@
-if __name__ == "__main__":
-    # Previous complete month (Postgres pattern)
-    # Running June 23rd → uses May 2026 full month
-    today           = datetime.now()
-    last_month_date = today - relativedelta(months=1)
+-- How many clusters have May data
+SELECT
+    COUNT(DISTINCT ClusterKey) AS ClustersWithMayData,
+    MIN(_date)                  AS From,
+    MAX(_date)                  AS To
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
+GO
 
-    months      = [last_month_date.strftime("%Y-%m")]
-    start_dates = [last_month_date.replace(day=1)
-                   .strftime("%Y-%m-%d")]
-    end_dates   = [((last_month_date.replace(day=1)
-                   + relativedelta(months=1))
-                   - timedelta(days=1)).strftime("%Y-%m-%d")]
-
-    print("months =", months)
-    print("StartDate =", start_dates[0])
-    print("EndDate =", end_dates[0])
+-- Check recommendations count
+SELECT
+    Month,
+    Action,
+    COUNT(DISTINCT ClusterKey) AS Clusters,
+    COUNT(*)                   AS TotalRows
+FROM [Metrics].[MongoDBRightsizingRecommendations]
+WHERE Month = '2026-05'
+GROUP BY Month, Action
+ORDER BY Action
+GO
