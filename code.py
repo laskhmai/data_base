@@ -1,16 +1,16 @@
--- Compare AVG vs SUM for cdr-uat
--- to understand the impact
+if __name__ == "__main__":
+    # Previous complete month (Postgres pattern)
+    # Running June 23rd → uses May 2026 full month
+    today           = datetime.now()
+    last_month_date = today - relativedelta(months=1)
 
-SELECT
-    ClusterName,
-    _date,
-    _hour,
-    ROUND(AVG(CpuAvg), 2)   AS CurrentAvgMethod,
-    ROUND(SUM(CpuAvg), 2)   AS SumMethod,
-    COUNT(*)                 AS ProcessCount
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'cdr-uat'
-AND   _date       = '2026-06-16'
-AND   _hour       = 0
-GROUP BY ClusterName, _date, _hour
-GO
+    months      = [last_month_date.strftime("%Y-%m")]
+    start_dates = [last_month_date.replace(day=1)
+                   .strftime("%Y-%m-%d")]
+    end_dates   = [((last_month_date.replace(day=1)
+                   + relativedelta(months=1))
+                   - timedelta(days=1)).strftime("%Y-%m-%d")]
+
+    print("months =", months)
+    print("StartDate =", start_dates[0])
+    print("EndDate =", end_dates[0])
