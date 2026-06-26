@@ -1,7 +1,8 @@
-Validation completed for MongoDB Rightsizing 
-Recommendations — May 2026.
-
-Three tables were validated:
-  - Aggregated: 93,719 rows across 286 clusters
-  - Recommendations: 842 rows across 285 clusters
-  - Simulated Metrics: 93,378 rows across 285 clusters
+SELECT
+    ROUND(AVG(c.Measurement), 2) AS ExactCpuAvg
+FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M] c
+JOIN [MongoDB].[Process] p
+    ON  p.ProcessId  = c.[Key]
+    AND p.ClusterKey = 330
+WHERE CAST(c.DateTime AS DATE)   = '2026-06-16'
+AND   DATEPART(HOUR,c.DateTime)  = 0
