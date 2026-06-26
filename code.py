@@ -1,16 +1,17 @@
--- What does aggregated table show?
+-- Summary of CpuMax for this cluster
 SELECT
     ClusterName,
-    _date,
-    _hour,
-    [type],
-    businessHour,
-    ROUND(CpuAvg,    2) AS CpuAvg,
-    ROUND(CpuMax,    2) AS CpuMax,
-    ROUND(CpuAvgP95, 2) AS CpuAvgP95,
-    ROUND(CpuMaxP95, 2) AS CpuMaxP95
+    FORMAT(_date,'yyyy-MM')     AS Month,
+    ROUND(AVG(CpuMax),  2)     AS AvgOfCpuMax,
+    ROUND(MAX(CpuMax),  2)     AS MaxCpuMax,
+    ROUND(AVG(CpuAvg),  2)     AS AvgCpuAvg,
+    ROUND(MAX(CpuAvgP95),2)    AS MaxCpuAvgP95,
+    ROUND(MAX(CpuMaxP95),2)    AS MaxCpuMaxP95,
+    COUNT(*)                    AS TotalRows
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 WHERE ClusterName LIKE '%cmsonc-eob-prod%'
-AND   FORMAT(_date,'yyyy-MM') = '2026-05'
-ORDER BY CpuMax DESC
+GROUP BY
+    ClusterName,
+    FORMAT(_date,'yyyy-MM')
+ORDER BY Month
 GO
