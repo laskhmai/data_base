@@ -860,22 +860,32 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
     total = len(df)
     print(f"Upserting {total} rows...")
 
+    # Step 1: Delete ALL existing rows for this month
+    # Done ONCE before insert to prevent duplicates
+    # Handles case where script runs multiple times
+    months_in_df = df["Month"].unique().tolist()
+    conn = connect_to_db()
+    cur  = conn.cursor()
+    for month in months_in_df:
+        cluster_keys = df[df["Month"] == month]["ClusterKey"].unique().tolist()
+        for ck in cluster_keys:
+            cur.execute("""
+                DELETE FROM [Metrics].[MongoDBRightsizingRecommendations]
+                WHERE Month      = ?
+                AND   ClusterKey = ?
+            """, (month, int(ck)))
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"Deleted existing rows for months: {months_in_df}")
+
+    # Step 2: Insert all fresh rows in chunks
     for start in range(0, total, chunk_size):
         chunk = df.iloc[start : start + chunk_size].copy()
         conn  = connect_to_db()
         cur   = conn.cursor()
 
         for _, row in chunk.iterrows():
-            # Delete existing row for this key
-            cur.execute("""
-                DELETE FROM [Metrics].[MongoDBRightsizingRecommendations]
-                WHERE Month      = ?
-                AND   ClusterKey = ?
-                AND   DayType    = ?
-                AND   HourType   = ?
-            """, row["Month"], row["ClusterKey"], row["DayType"], row["HourType"])
-
-            # Insert fresh row
             cur.execute(INSERT_SQL, tuple(row[col] for col in INSERT_COLUMNS))
 
         conn.commit()
