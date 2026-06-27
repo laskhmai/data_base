@@ -527,11 +527,14 @@ def load_spend_data(month: str) -> dict:
     if df.empty:
         return {}
     return dict(zip(df["ClusterName"], df["ActualSpend"]))
+
+
+def build_cluster_inventory_query(start_date: str, end_date: str) -> str:
     return f"""
         -- Use MongoDB.Clusters as source of truth
         -- Ensures new clusters are included
         -- Ensures decommissioned clusters excluded
-        -- StateName != DELETING/DELETED = active only
+        -- StateName IN ('IDLE','UPDATING') = active only
         -- Paused = 0 = not paused
         -- Join Aggregated for InstanceSize/Provider/Region
         SELECT DISTINCT
