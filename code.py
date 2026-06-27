@@ -499,20 +499,48 @@ def component_comment(cpu_idx: int, mem_idx: int, conn_idx: int, current_idx: in
 # 7. SQL BUILDERS
 # ===========================================================================
 
-def build_cluster_inventory_query(start_date: str, end_date: str) -> str:
+def load_spend_data(month: str) -> dict:
+    """
+    Load actual monthly spend per cluster from MongoDB.Spend table.
+    Returns dict: {ClusterName: ActualMonthlySpend}
+    Uses SUM(Amount) for the given month.
+    More accurate than CostPrHour × hours calculation.
+    """
+    sql = f"""
+        SELECT
+            Cluster                     AS ClusterName,
+            ROUND(SUM(Amount), 2)       AS ActualSpend
+        FROM [MongoDB].[Spend]
+        WHERE FORMAT(CAST(UsageDate AS DATE), 'yyyy-MM') = '{month}'
+        GROUP BY Cluster
+    """
+    df = fetch_data(sql)
+    if df.empty:
+        return {}
+    return dict(zip(df["ClusterName"], df["ActualSpend"]))
     return f"""
+        -- Use MongoDB.Clusters as source of truth
+        -- Ensures new clusters are included
+        -- Ensures decommissioned clusters excluded
+        -- StateName != DELETING/DELETED = active only
+        -- Paused = 0 = not paused
+        -- Join Aggregated for InstanceSize/Provider/Region
         SELECT DISTINCT
-            metrics.ClusterKey,
-            metrics.ClusterName,
-            metrics.InstanceSize,
-            metrics.ProviderName,
-            metrics.RegionName,
-            metrics.OrgKey,
-            CAST(metrics.OrgKey AS NVARCHAR(255)) AS OrgName,
-            metrics.ProjectKey
-        FROM [Metrics].[MongoDBRightsizingAggregated5Min] metrics
-        WHERE metrics._date BETWEEN '{start_date}' AND '{end_date}'
-          AND InstanceSize IS NOT NULL
+            c.ClustersKey                           AS ClusterKey,
+            c.Name                                  AS ClusterName,
+            a.InstanceSize,
+            a.ProviderName,
+            a.RegionName,
+            a.OrgKey,
+            CAST(a.OrgKey AS NVARCHAR(255))         AS OrgName,
+            c.ProjectKey
+        FROM [MongoDB].[Clusters] c
+        INNER JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
+            ON  a.ClusterKey = c.ClustersKey
+            AND a._date BETWEEN '{start_date}' AND '{end_date}'
+        WHERE c.StateName IN ('IDLE', 'UPDATING')
+          AND c.Paused      = 0
+          AND a.InstanceSize IS NOT NULL
     """
 
 
@@ -609,7 +637,7 @@ def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: s
 
 def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
                     provider_name: str, region_name: str, config: dict,
-                    metacache: dict) -> dict | None:
+                    metacache: dict, spend_data: dict = {}) -> dict | None:
 
     start_date = config["StartDate"]
     end_date   = config["EndDate"]
@@ -677,10 +705,14 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
         overall_sku = actual_sku
         print(f"Connection-only upsize skipped for {cluster_name}")
 
-    current_cost           = specs.get(actual_sku,   {}).get("CostPrHour", 0.0)
-    recommended_cost       = specs.get(overall_sku,  {}).get("CostPrHour", 0.0)
-    hours_in_month         = _hours_in_range(start_date, end_date)
-    spend_30_days          = current_cost * hours_in_month
+    current_cost              = specs.get(actual_sku,  {}).get("CostPrHour", 0.0)
+    recommended_cost          = specs.get(overall_sku, {}).get("CostPrHour", 0.0)
+    hours_in_month            = _hours_in_range(start_date, end_date)
+
+    # Use actual spend from MongoDB.Spend table
+    # Falls back to calculated spend if not available
+    spend_30_days             = spend_data.get(cluster_name,
+                                current_cost * hours_in_month)
     estimated_monthly_savings = (current_cost - recommended_cost) * hours_in_month
 
     comment = "High Connections — Review Connection Pooling" if conn_only_upsize \
@@ -875,6 +907,11 @@ if __name__ == "__main__":
 
     for month, configs in month_dict.items():
         print(f"Running for month: {month}")
+
+        # Load actual spend from MongoDB.Spend table
+        spend_data = load_spend_data(month)
+        print(f"Spend data loaded: {len(spend_data)} clusters")
+
         for config in configs:
             _count(config["StartDate"], config["EndDate"])
 
@@ -895,6 +932,7 @@ if __name__ == "__main__":
                 result = process_cluster(
                     cluster_key, cluster_name, instance_size,
                     provider_name, region_name, config, metacache,
+                    spend_data,
                 )
                 if result is None:
                     continue
