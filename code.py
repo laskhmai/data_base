@@ -53,6 +53,15 @@ PASSWORD = "H@Sh1CoRS!"
 DRIVER   = "{ODBC Driver 17 for SQL Server}"
 
 
+# ===========================================================================
+# FEATURE FLAGS
+# Toggle on/off specific metric recommendations
+# Set to True  = skip that metric for ALL clusters
+# Set to False = use that metric normally
+# ===========================================================================
+SKIP_MEMORY_RECOMMENDATIONS = True   # Neeraja: do not consider memory until confirmed
+
+
 def connect_to_db():
     try:
         conn = pyodbc.connect(
@@ -681,8 +690,16 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
 
     data["InstanceSize"] = actual_sku
 
-    cpu_rec               = recommendations("Cpu", data, actual_sku, ordered_tiers)
-    mem_rec               = recommendations("Mem", data, actual_sku, ordered_tiers)
+    cpu_rec = recommendations("Cpu", data, actual_sku, ordered_tiers)
+
+    # Memory flag — skip memory recommendations for ALL clusters
+    # Set SKIP_MEMORY_RECOMMENDATIONS = False to re-enable
+    if SKIP_MEMORY_RECOMMENDATIONS:
+        print(f"Memory recommendations skipped for {cluster_name} (flag enabled)")
+        mem_rec = []
+    else:
+        mem_rec = recommendations("Mem", data, actual_sku, ordered_tiers)
+
     conn_sku, conn_comment = connections_recommendation(data, actual_sku, ordered_tiers, specs)
 
     cpu_sku = cpu_rec[0][0] if cpu_rec else actual_sku
