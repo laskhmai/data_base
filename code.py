@@ -1,43 +1,50 @@
--- STEP 1: Raw table date range
+-- Check what we got
 SELECT
-    'Raw CPU Table'                     AS Source,
-    MIN(CAST(DateTime AS DATE))         AS DataFrom,
-    MAX(CAST(DateTime AS DATE))         AS DataTo,
-    COUNT(DISTINCT CAST(DateTime AS DATE)) AS UniqueDays
-FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
-WHERE FORMAT(DateTime,'yyyy-MM') = '2026-05'
-
-UNION ALL
-
--- STEP 2: Aggregated table date range
-SELECT
-    'Aggregated Table'                  AS Source,
-    MIN(_date)                          AS DataFrom,
-    MAX(_date)                          AS DataTo,
-    COUNT(DISTINCT _date)               AS UniqueDays
+    FORMAT(_date,'yyyy-MM')         AS Month,
+    COUNT(*)                        AS TotalRows,
+    COUNT(DISTINCT ClusterKey)      AS Clusters,
+    MIN(_date)                      AS DataFrom,
+    MAX(_date)                      AS DataTo
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
+GROUP BY FORMAT(_date,'yyyy-MM')
+ORDER BY Month
 GO
 
--- STEP 3: Per day comparison
--- See if any days in raw but not in aggregated
+-- Check duplicates in aggregated table
 SELECT
-    r.RawDate,
-    CASE WHEN a.AggDate IS NOT NULL
-         THEN 'In Aggregated ✅'
-         ELSE 'Missing from Aggregated ❌'
-    END                                 AS AggregatedStatus
-FROM (
-    SELECT DISTINCT
-        CAST(DateTime AS DATE)          AS RawDate
-    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
-    WHERE FORMAT(DateTime,'yyyy-MM') = '2026-05'
-) r
-LEFT JOIN (
-    SELECT DISTINCT
-        _date                           AS AggDate
-    FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-    WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
-) a ON a.AggDate = r.RawDate
-ORDER BY r.RawDate
+    ClusterKey,
+    _date,
+    _hour,
+    [type],
+    businessHour,
+    COUNT(*) AS RowCount
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+GROUP BY
+    ClusterKey,
+    _date,
+    _hour,
+    [type],
+    businessHour
+HAVING COUNT(*) > 1
+ORDER BY RowCount DESC
+GO
+
+-- Summary
+SELECT
+    COUNT(*)                    AS TotalRows,
+    COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey AS VARCHAR),
+        CAST(_date      AS VARCHAR),
+        CAST(_hour      AS VARCHAR),
+        [type],
+        businessHour
+    ))                          AS UniqueRows,
+    COUNT(*) - COUNT(DISTINCT CONCAT(
+        CAST(ClusterKey AS VARCHAR),
+        CAST(_date      AS VARCHAR),
+        CAST(_hour      AS VARCHAR),
+        [type],
+        businessHour
+    ))                          AS DuplicateRows
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 GO
