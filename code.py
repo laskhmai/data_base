@@ -1,55 +1,43 @@
--- Check if missing clusters exist in Process table
+-- STEP 1: Raw table date range
 SELECT
-    c.ClustersKey                       AS ClusterKey,
-    c.Name                              AS ClusterName,
-    c.StateName,
-    COUNT(p.ProcessKey)                 AS ProcessCount,
-    MIN(p.AuditUtc)                     AS FirstSeenInProcess,
-    MAX(p.AuditUtc)                     AS LastSeenInProcess,
-    SUM(CASE WHEN p.IsDeleted = 0
-             THEN 1 ELSE 0 END)         AS ActiveProcesses,
-    SUM(CASE WHEN p.IsDeleted = 1
-             THEN 1 ELSE 0 END)         AS DeletedProcesses
-FROM [MongoDB].[Clusters] c
-LEFT JOIN [MongoDB].[Process] p
-    ON p.ClusterKey = c.ClustersKey
-WHERE c.StateName IN ('IDLE','UPDATING')
-AND   c.Paused = 0
-AND   c.ClustersKey NOT IN (
-    SELECT DISTINCT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE Month = '2026-05'
-)
-GROUP BY
-    c.ClustersKey,
-    c.Name,
-    c.StateName
-ORDER BY ProcessCount DESC, c.Name
+    'Raw CPU Table'                     AS Source,
+    MIN(CAST(DateTime AS DATE))         AS DataFrom,
+    MAX(CAST(DateTime AS DATE))         AS DataTo,
+    COUNT(DISTINCT CAST(DateTime AS DATE)) AS UniqueDays
+FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
+WHERE FORMAT(DateTime,'yyyy-MM') = '2026-05'
+
+UNION ALL
+
+-- STEP 2: Aggregated table date range
+SELECT
+    'Aggregated Table'                  AS Source,
+    MIN(_date)                          AS DataFrom,
+    MAX(_date)                          AS DataTo,
+    COUNT(DISTINCT _date)               AS UniqueDays
+FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
 GO
 
--- Summary
+-- STEP 3: Per day comparison
+-- See if any days in raw but not in aggregated
 SELECT
-    CASE
-        WHEN COUNT(p.ProcessKey) = 0
-        THEN 'No processes in Process table'
-        WHEN SUM(CASE WHEN p.IsDeleted=0 THEN 1 ELSE 0 END) = 0
-        THEN 'Only deleted processes'
-        ELSE 'Has active processes'
-    END                                 AS ProcessStatus,
-    COUNT(DISTINCT c.ClustersKey)       AS ClusterCount
-FROM [MongoDB].[Clusters] c
-LEFT JOIN [MongoDB].[Process] p
-    ON p.ClusterKey = c.ClustersKey
-WHERE c.StateName IN ('IDLE','UPDATING')
-AND   c.Paused = 0
-AND   c.ClustersKey NOT IN (
-    SELECT DISTINCT ClusterKey
-    FROM [Metrics].[MongoDBRightsizingRecommendations]
-    WHERE Month = '2026-05'
-)
-GROUP BY
-    c.ClustersKey,
-    c.Name,
-    c.StateName
-ORDER BY ProcessStatus
+    r.RawDate,
+    CASE WHEN a.AggDate IS NOT NULL
+         THEN 'In Aggregated ✅'
+         ELSE 'Missing from Aggregated ❌'
+    END                                 AS AggregatedStatus
+FROM (
+    SELECT DISTINCT
+        CAST(DateTime AS DATE)          AS RawDate
+    FROM [Metrics].[MongoDB_System_Normalized_Cpu_User_5M]
+    WHERE FORMAT(DateTime,'yyyy-MM') = '2026-05'
+) r
+LEFT JOIN (
+    SELECT DISTINCT
+        _date                           AS AggDate
+    FROM [Metrics].[MongoDBRightsizingAggregated5Min]
+    WHERE FORMAT(_date,'yyyy-MM') = '2026-05'
+) a ON a.AggDate = r.RawDate
+ORDER BY r.RawDate
 GO
