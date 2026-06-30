@@ -1,15 +1,25 @@
--- Find which day has CpuMaxP95 = 82.17%
-SELECT
-    _date,
-    _hour,
-    ROUND(CpuAvg,    2)    AS CpuAvg,
-    ROUND(CpuMax,    2)    AS CpuMax,
-    ROUND(CpuAvgP95, 2)    AS CpuAvgP95,
-    ROUND(CpuMaxP95, 2)    AS CpuMaxP95,
-    DATEPART(WEEK, _date)  AS WeekNumber
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName  = 'cdr-uat'
-AND   FORMAT(_date,'yyyy-MM') = '2026-05'
-AND   CpuMaxP95    > 50
-ORDER BY CpuMaxP95 DESC
-GO
+Hi Neeraja garu,
+
+Made the fixes you mentioned (CpuMax check, 
+duplicate fix, cluster table source, Spend 
+table, memory flag).
+
+Two things to flag:
+
+1. May data only starts from May 12, not 
+   May 1. Missing data for May 1-11.
+
+2. After adding the CpuMax spike check, we 
+   are getting 0 Downsize recommendations 
+   out of 275 clusters. Even cdr-uat now 
+   shows NoChange because of 2 spike hours 
+   out of 341 total hours (0.6%).
+
+Questions:
+1. Is 20 days of May data fine, or should 
+   we backfill May 1-11?
+2. Should one rare spike block Downsize for 
+   the whole month, or is it ok if spikes 
+   are under ~5% of hours?
+
+Thanks!
