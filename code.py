@@ -702,7 +702,14 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     mem_idx     = tier_index(mem_sku,    ordered_tiers)
     conn_idx    = tier_index(conn_sku,   ordered_tiers)
 
-    overall_idx = max(cpu_idx, mem_idx, conn_idx)
+    # When memory is skipped, exclude it from the overall comparison
+    # entirely instead of defaulting to current_idx — defaulting to
+    # current_idx silently acts as a floor that blocks ALL downsizes
+    # (since current_idx is always >= any downsize suggestion)
+    if SKIP_MEMORY_RECOMMENDATIONS:
+        overall_idx = max(cpu_idx, conn_idx)
+    else:
+        overall_idx = max(cpu_idx, mem_idx, conn_idx)
     overall_sku = ordered_tiers[overall_idx]
 
     # Connection-only upsize → NoChange
