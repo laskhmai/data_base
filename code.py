@@ -1,30 +1,26 @@
--- Check if IOPS is in ReplicationSpecs JSON
-SELECT TOP 5
-    Name,
-    JSON_VALUE(ReplicationSpecs,
-        '$[0].regionConfigs[0].electableSpecs.instanceSize') AS InstanceSize,
-    JSON_VALUE(ReplicationSpecs,
-        '$[0].regionConfigs[0].electableSpecs.diskIOPS')     AS DiskIOPS,
-    JSON_VALUE(ReplicationSpecs,
-        '$[0].regionConfigs[0].electableSpecs.ebsVolumeType') AS VolumeType
-FROM [MongoDB].[Clusters]
-WHERE StateName = 'IDLE'
-AND   Paused    = 0
-GO
+Hi Neeraja garu,
 
--- What IOPS values do our clusters actually hit?
-SELECT
-    p.ClusterKey,
-    cl.Name                         AS ClusterName,
-    ROUND(AVG(r.Measurement), 2)    AS AvgReadIOPS,
-    ROUND(MAX(r.Measurement), 2)    AS MaxReadIOPS
-FROM [Metrics].[MongoDB_Disk_partition_Iops_Read_1H] r
-JOIN [MongoDB].[Process] p
-    ON p.ProcessId = r.[Key]
-    AND p.IsDeleted = 0
-JOIN [MongoDB].[Clusters] cl
-    ON cl.ClustersKey = p.ClusterKey
-WHERE FORMAT(r.DateTime,'yyyy-MM') = '2026-06'
-GROUP BY p.ClusterKey, cl.Name
-ORDER BY MaxReadIOPS DESC
-GO
+Researching memory metrics for MongoDB.
+
+Current situation:
+  We store MEMORY_RESIDENT in MB
+  Convert to % using SKU RAM from MetaConfig
+  This works but is indirect
+
+Direct 0-100% metrics available:
+
+1. CACHE_FILL_RATIO
+   WiredTiger cache utilization %
+   Most relevant for MongoDB performance
+   Cache full = data spilling to disk
+
+2. SYSTEM_MEMORY_PERCENT_USED
+   System-level memory %
+   Need to verify this exists in Atlas API
+
+Checking from Postman now to confirm
+which metrics return 0-100 values.
+
+Will share findings shortly!
+
+Thank you!
