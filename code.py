@@ -1,26 +1,28 @@
 Hi Neeraja garu,
 
-Researching memory metrics for MongoDB.
+You are right — both metrics can exceed 100%.
 
-Current situation:
-  We store MEMORY_RESIDENT in MB
-  Convert to % using SKU RAM from MetaConfig
-  This works but is indirect
+MEMORY_RESIDENT:
+  Stored in MB, converted using SKU RAM
+  Can exceed 100% if processes 
+  are summed incorrectly
 
-Direct 0-100% metrics available:
+SYSTEM_MEMORY_PERCENT_USED:
+  Should be 0-100% per server
+  But shows > 100% because same server
+  memory is reported by multiple processes
+  We are summing what should be MAX-ed
 
-1. CACHE_FILL_RATIO
-   WiredTiger cache utilization %
-   Most relevant for MongoDB performance
-   Cache full = data spilling to disk
+Fix: For all memory metrics use MAX 
+across processes (not AVG or SUM)
 
-2. SYSTEM_MEMORY_PERCENT_USED
-   System-level memory %
-   Need to verify this exists in Atlas API
+MAX(SYSTEM_MEMORY_PERCENT_USED) per hour
+= true server memory utilization ✅
+= always 0-100% ✅
 
-Checking from Postman now to confirm
-which metrics return 0-100 values.
+This would be the cleanest metric
+for memory recommendations.
 
-Will share findings shortly!
+Shall we use this approach?
 
 Thank you!
