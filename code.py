@@ -1,13 +1,9 @@
-GET https://cloud.mongodb.com/api/atlas/v2/groups/
-    {projectId}/processes/{hostId}:{port}/measurements?
-    m=CACHE_FILL_RATIO
-    &m=DIRTY_FILL_RATIO
-    &m=SYSTEM_MEMORY_USED
-    &m=SYSTEM_MEMORY_FREE
-    &m=SYSTEM_MEMORY_CACHED
-    &m=SYSTEM_MEMORY_AVAILABLE
-    &m=SWAP_USAGE_USED
-    &m=SWAP_IO_IN
-    &m=SWAP_IO_OUT
-    &granularity=PT5M
-    &period=P1D
+Hi Pankaj,
+
+I reviewed the latest terraform module `se-windowsvm-cloud-3-0` version `3.0.0`, specifically the VM and managed disk configuration.
+
+The module currently creates/attaches OS disk and data disks, but I do not see explicit disk network access settings such as `network_access_policy`, `public_network_access_enabled`, `disk_access_id`, or `azurerm_disk_access`.
+
+So based on the current module code, version 3.0.0 does not appear to explicitly cover the Prisma recommendation for limiting Azure VM disk network access. This may require a module enhancement or additional disk-level configuration as per the ticket recommendation.
+
+Thanks.
