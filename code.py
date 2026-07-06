@@ -1,9 +1,1 @@
-Hi Pankaj,
-
-I reviewed the latest terraform module `se-windowsvm-cloud-3-0` version `3.0.0`, specifically the VM and managed disk configuration.
-
-The module currently creates/attaches OS disk and data disks, but I do not see explicit disk network access settings such as `network_access_policy`, `public_network_access_enabled`, `disk_access_id`, or `azurerm_disk_access`.
-
-So based on the current module code, version 3.0.0 does not appear to explicitly cover the Prisma recommendation for limiting Azure VM disk network access. This may require a module enhancement or additional disk-level configuration as per the ticket recommendation.
-
-Thanks.
+Hi <Name>, I was looking into this issue. It looks like the user was trying to onboard/create the membercommunication MongoDB database with the required users and roles but was facing this issue. While checking the commit history, I found that after PR #249 added the changes, another PR (#251) was created to fix the tab/indentation in the membercommunication user-list entries. I was wondering if the original formatting could have affected the payload generation or onboarding
