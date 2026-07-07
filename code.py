@@ -1,50 +1,68 @@
--- Deep dive: 2 wrong + 4 edge cases
--- Check raw metrics to understand what is happening
-
-DECLARE @Month CHAR(7) = '2026-06'
-
+-- How many current Upsize clusters
+-- have low CpuAvgP95?
 SELECT
-    n.ClusterName,
-    n.DayType,
-    n.HourType,
-    n.Action                            AS Normal_Action,
-    s.Action                            AS STL_Action,
-    ROUND(MAX(a.CpuMaxP95),  2)         AS CpuMaxP95,
-    ROUND(MAX(a.CpuMaxP95)*2,2)         AS CpuMaxP95x2,
-    ROUND(MAX(a.CpuAvgP95),  2)         AS CpuAvgP95,
-    ROUND(MAX(a.CpuMax),     2)         AS PeakCpuMax,
-    ROUND(AVG(a.CpuAvg),     2)         AS AvgCpuAvg,
-    ROUND(MAX(a.ConnUtilizationPct),2)  AS MaxConnUtil,
-    -- How many hours had high CPU?
-    SUM(CASE WHEN a.CpuMax > 80
-             THEN 1 ELSE 0 END)         AS HoursAbove80,
-    SUM(CASE WHEN a.CpuMax > 50
-             THEN 1 ELSE 0 END)         AS HoursAbove50,
-    COUNT(*)                            AS TotalHours
-FROM [Metrics].[MongoDBRightsizingRecommendations] n
-JOIN [Metrics].[MongoDBRightsizingRecommendations_STL] s
-    ON  s.ClusterKey = n.ClusterKey
-    AND s.DayType    = n.DayType
-    AND s.HourType   = n.HourType
-    AND s.Month      = n.Month
+    r.ClusterName,
+    r.DayType,
+    r.HourType,
+    r.Action,
+    ROUND(MAX(a.CpuMaxP95), 2)   AS CpuMaxP95,
+    ROUND(MAX(a.CpuAvgP95), 2)   AS CpuAvgP95,
+    ROUND(MAX(a.CpuMax),    2)   AS PeakCpuMax
+FROM [Metrics].[MongoDBRightsizingRecommendations] r
 JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
-    ON  a.ClusterKey   = n.ClusterKey
-    AND a.[type]       = n.DayType
-    AND a.businessHour = n.HourType
-    AND FORMAT(a._date,'yyyy-MM') = @Month
-WHERE n.ClusterName IN (
-    -- 2 wrong STL clusters
-    'cwh-cp-mgmt-dev',
-    'ecr-cld3-qa',
-    -- 4 edge cases
-    'HCaaS-PRD-ClaimIngestor',
-    'HCaaS-PRD-Member',
-    'Cluster0',
-    'ma-dep-prod'
-)
-AND n.Action != s.Action
+    ON  a.ClusterKey   = r.ClusterKey
+    AND a.[type]       = r.DayType
+    AND a.businessHour = r.HourType
+WHERE r.Action = 'Upsize'
+AND   r.Month  = '2026-06'
 GROUP BY
-    n.ClusterName, n.DayType, n.HourType,
-    n.Action, s.Action
-ORDER BY n.ClusterName
+    r.ClusterName, r.DayType,
+    r.HourType, r.Action
+ORDER BY CpuAvgP95 ASC
+GO
+
+
+-- How many STL Downsize clusters
+-- have CpuMaxP95×2 > 100%?
+SELECT
+    s.ClusterName,
+    s.Action,
+    ROUND(MAX(a.CpuMaxP95),  2)  AS CpuMaxP95,
+    ROUND(MAX(a.CpuMaxP95)*2,2)  AS CpuMaxP95x2
+FROM [Metrics].[MongoDBRightsizingRecommendations_STL] s
+JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
+    ON  a.ClusterKey   = s.ClusterKey
+    AND a.[type]       = s.DayType
+    AND a.businessHour = s.HourType
+WHERE s.Action = 'Downsize'
+AND   s.Month  = '2026-06'
+GROUP BY s.ClusterName, s.Action
+HAVING MAX(a.CpuMaxP95) * 2 > 100
+ORDER BY CpuMaxP95x2 DESC
+GO
+
+
+
+
+-- How many Upsize clusters have
+-- CpuAvgP95 < 20%?
+SELECT
+    r.ClusterName,
+    r.DayType,
+    r.HourType,
+    r.Action,
+    ROUND(MAX(a.CpuAvgP95), 2)  AS CpuAvgP95,
+    ROUND(MAX(a.CpuMaxP95), 2)  AS CpuMaxP95
+FROM [Metrics].[MongoDBRightsizingRecommendations] r
+JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
+    ON  a.ClusterKey   = r.ClusterKey
+    AND a.[type]       = r.DayType
+    AND a.businessHour = r.HourType
+WHERE r.Action = 'Upsize'
+AND   r.Month  = '2026-06'
+GROUP BY
+    r.ClusterName, r.DayType,
+    r.HourType, r.Action
+HAVING MAX(a.CpuAvgP95) < 20
+ORDER BY CpuAvgP95 ASC
 GO
