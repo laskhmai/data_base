@@ -1,62 +1,50 @@
--- SUMMARY FIXED
+-- Deep dive: 2 wrong + 4 edge cases
+-- Check raw metrics to understand what is happening
+
+DECLARE @Month CHAR(7) = '2026-06'
+
 SELECT
-    Verdict,
-    COUNT(*)                            AS ClusterSlices,
-    COUNT(DISTINCT ClusterName)         AS UniqueClusters
-FROM (
-    SELECT
-        n.ClusterName                   AS ClusterName,
-        CASE
-            WHEN n.Action = CASE
-                WHEN r.CpuMaxP95x2 < 100
-                AND  r.CpuAvgP95x2 < 100
-                THEN 'Downsize' ELSE 'NoChange' END
-            AND  s.Action != CASE
-                WHEN r.CpuMaxP95x2 < 100
-                AND  r.CpuAvgP95x2 < 100
-                THEN 'Downsize' ELSE 'NoChange' END
-            THEN 'Normal Correct'
-
-            WHEN s.Action = CASE
-                WHEN r.CpuMaxP95x2 < 100
-                AND  r.CpuAvgP95x2 < 100
-                THEN 'Downsize' ELSE 'NoChange' END
-            AND  n.Action != CASE
-                WHEN r.CpuMaxP95x2 < 100
-                AND  r.CpuAvgP95x2 < 100
-                THEN 'Downsize' ELSE 'NoChange' END
-            THEN 'STL Correct'
-
-            ELSE 'Edge Case'
-        END                             AS Verdict
-    FROM [Metrics].[MongoDBRightsizingRecommendations] n
-    JOIN [Metrics].[MongoDBRightsizingRecommendations_STL] s
-        ON  s.ClusterKey = n.ClusterKey
-        AND s.DayType    = n.DayType
-        AND s.HourType   = n.HourType
-        AND s.Month      = n.Month
-    JOIN (
-        SELECT
-            ClusterKey,
-            [type]                      AS DayType,
-            businessHour                AS HourType,
-            FORMAT(_date,'yyyy-MM')     AS Month,
-            ROUND(MAX(CpuMaxP95)*2, 2)  AS CpuMaxP95x2,
-            ROUND(MAX(CpuAvgP95)*2, 2)  AS CpuAvgP95x2
-        FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-        WHERE FORMAT(_date,'yyyy-MM') = '2026-06'
-        GROUP BY
-            ClusterKey,
-            [type],
-            businessHour,
-            FORMAT(_date,'yyyy-MM')
-    ) r
-        ON  r.ClusterKey = n.ClusterKey
-        AND r.DayType    = n.DayType
-        AND r.HourType   = n.HourType
-        AND r.Month      = n.Month
-    WHERE n.Action != s.Action
-) x
-GROUP BY Verdict
-ORDER BY ClusterSlices DESC
+    n.ClusterName,
+    n.DayType,
+    n.HourType,
+    n.Action                            AS Normal_Action,
+    s.Action                            AS STL_Action,
+    ROUND(MAX(a.CpuMaxP95),  2)         AS CpuMaxP95,
+    ROUND(MAX(a.CpuMaxP95)*2,2)         AS CpuMaxP95x2,
+    ROUND(MAX(a.CpuAvgP95),  2)         AS CpuAvgP95,
+    ROUND(MAX(a.CpuMax),     2)         AS PeakCpuMax,
+    ROUND(AVG(a.CpuAvg),     2)         AS AvgCpuAvg,
+    ROUND(MAX(a.ConnUtilizationPct),2)  AS MaxConnUtil,
+    -- How many hours had high CPU?
+    SUM(CASE WHEN a.CpuMax > 80
+             THEN 1 ELSE 0 END)         AS HoursAbove80,
+    SUM(CASE WHEN a.CpuMax > 50
+             THEN 1 ELSE 0 END)         AS HoursAbove50,
+    COUNT(*)                            AS TotalHours
+FROM [Metrics].[MongoDBRightsizingRecommendations] n
+JOIN [Metrics].[MongoDBRightsizingRecommendations_STL] s
+    ON  s.ClusterKey = n.ClusterKey
+    AND s.DayType    = n.DayType
+    AND s.HourType   = n.HourType
+    AND s.Month      = n.Month
+JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
+    ON  a.ClusterKey   = n.ClusterKey
+    AND a.[type]       = n.DayType
+    AND a.businessHour = n.HourType
+    AND FORMAT(a._date,'yyyy-MM') = @Month
+WHERE n.ClusterName IN (
+    -- 2 wrong STL clusters
+    'cwh-cp-mgmt-dev',
+    'ecr-cld3-qa',
+    -- 4 edge cases
+    'HCaaS-PRD-ClaimIngestor',
+    'HCaaS-PRD-Member',
+    'Cluster0',
+    'ma-dep-prod'
+)
+AND n.Action != s.Action
+GROUP BY
+    n.ClusterName, n.DayType, n.HourType,
+    n.Action, s.Action
+ORDER BY n.ClusterName
 GO
