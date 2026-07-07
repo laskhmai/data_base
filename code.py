@@ -1,68 +1,34 @@
--- How many current Upsize clusters
--- have low CpuAvgP95?
 SELECT
     r.ClusterName,
     r.DayType,
     r.HourType,
     r.Action,
-    ROUND(MAX(a.CpuMaxP95), 2)   AS CpuMaxP95,
-    ROUND(MAX(a.CpuAvgP95), 2)   AS CpuAvgP95,
-    ROUND(MAX(a.CpuMax),    2)   AS PeakCpuMax
+    ROUND(MAX(a.CpuAvgP95), 2)      AS CpuAvgP95,
+    ROUND(MAX(a.CpuMaxP95), 2)      AS CpuMaxP95,
+    ROUND(MAX(a.CpuMax),    2)      AS PeakCpuMax,
+    -- How often is CPU high?
+    SUM(CASE WHEN a.CpuMax > 80
+             THEN 1 ELSE 0 END)     AS HoursAbove80,
+    SUM(CASE WHEN a.CpuMax > 50
+             THEN 1 ELSE 0 END)     AS HoursAbove50,
+    COUNT(*)                        AS TotalHours
 FROM [Metrics].[MongoDBRightsizingRecommendations] r
 JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
     ON  a.ClusterKey   = r.ClusterKey
     AND a.[type]       = r.DayType
     AND a.businessHour = r.HourType
-WHERE r.Action = 'Upsize'
-AND   r.Month  = '2026-06'
+WHERE r.ClusterName IN (
+    'cwx-cwih-patient-mdm-qa',
+    'hqri-fhir-store-prd',
+    'ma-dep-prod',
+    'aiaa-app0002305-cld3-dev',
+    'stars-gic-prod',
+    'consumer-interops-prod'
+)
+AND r.Month  = '2026-06'
+AND r.Action = 'Upsize'
 GROUP BY
     r.ClusterName, r.DayType,
     r.HourType, r.Action
-ORDER BY CpuAvgP95 ASC
-GO
-
-
--- How many STL Downsize clusters
--- have CpuMaxP95×2 > 100%?
-SELECT
-    s.ClusterName,
-    s.Action,
-    ROUND(MAX(a.CpuMaxP95),  2)  AS CpuMaxP95,
-    ROUND(MAX(a.CpuMaxP95)*2,2)  AS CpuMaxP95x2
-FROM [Metrics].[MongoDBRightsizingRecommendations_STL] s
-JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
-    ON  a.ClusterKey   = s.ClusterKey
-    AND a.[type]       = s.DayType
-    AND a.businessHour = s.HourType
-WHERE s.Action = 'Downsize'
-AND   s.Month  = '2026-06'
-GROUP BY s.ClusterName, s.Action
-HAVING MAX(a.CpuMaxP95) * 2 > 100
-ORDER BY CpuMaxP95x2 DESC
-GO
-
-
-
-
--- How many Upsize clusters have
--- CpuAvgP95 < 20%?
-SELECT
-    r.ClusterName,
-    r.DayType,
-    r.HourType,
-    r.Action,
-    ROUND(MAX(a.CpuAvgP95), 2)  AS CpuAvgP95,
-    ROUND(MAX(a.CpuMaxP95), 2)  AS CpuMaxP95
-FROM [Metrics].[MongoDBRightsizingRecommendations] r
-JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
-    ON  a.ClusterKey   = r.ClusterKey
-    AND a.[type]       = r.DayType
-    AND a.businessHour = r.HourType
-WHERE r.Action = 'Upsize'
-AND   r.Month  = '2026-06'
-GROUP BY
-    r.ClusterName, r.DayType,
-    r.HourType, r.Action
-HAVING MAX(a.CpuAvgP95) < 20
 ORDER BY CpuAvgP95 ASC
 GO
