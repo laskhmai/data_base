@@ -897,9 +897,9 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
         "HourType":                hour_type,
         "CurrentSku":              actual_sku,
         "CurrentCostPrHour":       current_cost,
-        "CpuRec":                  cpu_sku,
-        "MemRec":                  mem_sku,
-        "ConnRec":                 conn_sku,
+        "CpuRec":                  cpu_sku or None,
+        "MemRec":                  mem_sku or None,
+        "ConnRec":                 conn_sku or None,
         "CpuAvgP95":               avg_cpu_p95,
         "CpuMaxP95":               max_cpu_p95,
         "PeakCpuMax":              peak_cpu_max,
@@ -915,8 +915,8 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
         "LowCpuEfficiency":        None,          # populated by usp_MongoDBRightsizingEfficiency
         "Spend30days":             spend_30_days,
         "WithinFamilySavings":     estimated_monthly_savings,  # placeholder — overwritten by Efficiency proc
-        "LowCpuSku":               low_cpu_sku,
-        "LowCpuSavings":           low_cpu_savings,
+        "LowCpuSku":               low_cpu_sku or None,
+        "LowCpuSavings":           low_cpu_savings if low_cpu_sku else 0.0,
         "Action":                  action,
         "AuditUtc":                audit_utc,
     }
@@ -998,22 +998,19 @@ def upsert_in_chunks(df: pd.DataFrame, chunk_size: int = 100):
     print(f"Deleted existing rows for months: {months_in_df}")
 
     # Step 2: Insert all fresh rows in chunks
+    def _safe_val(v):
+        """Final safety net — convert NaN/None float to None for SQL Server."""
+        if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            return None
+        return v
+
     for start in range(0, total, chunk_size):
         chunk = df.iloc[start : start + chunk_size].copy()
         conn  = connect_to_db()
         cur   = conn.cursor()
 
         for _, row in chunk.iterrows():
-            try:
-                cur.execute(INSERT_SQL, tuple(row[col] for col in INSERT_COLUMNS))
-            except Exception as e:
-                # Debug: find which column has bad value
-                print(f"\nINSERT ERROR for cluster: {row.get('ClusterName', 'unknown')}")
-                for col in INSERT_COLUMNS:
-                    val = row[col]
-                    if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
-                        print(f"  BAD VALUE → column: {col} = {val}")
-                raise e
+            cur.execute(INSERT_SQL, tuple(_safe_val(row[col]) for col in INSERT_COLUMNS))
 
         conn.commit()
         cur.close()
