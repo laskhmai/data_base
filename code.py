@@ -279,6 +279,8 @@ def _build_hour_range(date_range: pd.DatetimeIndex, hr_type: str, business_hour:
 
 
 def _onseasonality(seasonality: pd.DataFrame, start_date: str, end_date: str, sku: str, hr_type: str, business_hour: str, on_start: int, off_end: int) -> str:
+    # NOTE: Reserved for future use — not currently called
+    # Will be integrated with STL trend detection in next sprint
     x = seasonality.groupby(["Date", "Hour", "Action"]).size().reset_index(name="_count")
     x["_datetime"] = pd.to_datetime(x["Date"]) + pd.to_timedelta(x["Hour"], unit="h")
     if x[x["Action"] == sku].empty:
@@ -718,8 +720,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     if meta_key not in metacache:
         print(f"Loading MetaConfig for Provider={provider_name}, Region={region_name}")
         metacache[meta_key] = load_metaconfig(meta_key[0], meta_key[1])
-        specs, ordered = metacache[meta_key]
-        
+
     specs, ordered_tiers = metacache[meta_key]
 
     if not ordered_tiers:
@@ -892,7 +893,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
         "WithinEfficiency":        eff[1],
         "LowCpuEfficiency":        None,          # populated by usp_MongoDBRightsizingEfficiency
         "Spend30days":             spend_30_days,
-        "WithinFamilySavings":     estimated_monthly_savings,
+        "WithinFamilySavings":     estimated_monthly_savings,  # placeholder — overwritten by Efficiency proc
         "LowCpuSku":               low_cpu_sku,
         "LowCpuSavings":           low_cpu_savings,
         "Action":                  action,
@@ -1037,8 +1038,6 @@ if __name__ == "__main__":
         print(f"Spend data loaded: {len(spend_data)} clusters")
 
         for config in configs:
-            _count(config["StartDate"], config["EndDate"])
-
             clusters = fetch_data(build_cluster_inventory_query(config["StartDate"], config["EndDate"]))
             if clusters.empty:
                 continue
