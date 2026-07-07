@@ -1,34 +1,44 @@
-SELECT
-    r.ClusterName,
-    r.DayType,
-    r.HourType,
-    r.Action,
-    ROUND(MAX(a.CpuAvgP95), 2)      AS CpuAvgP95,
-    ROUND(MAX(a.CpuMaxP95), 2)      AS CpuMaxP95,
-    ROUND(MAX(a.CpuMax),    2)      AS PeakCpuMax,
-    -- How often is CPU high?
-    SUM(CASE WHEN a.CpuMax > 80
-             THEN 1 ELSE 0 END)     AS HoursAbove80,
-    SUM(CASE WHEN a.CpuMax > 50
-             THEN 1 ELSE 0 END)     AS HoursAbove50,
-    COUNT(*)                        AS TotalHours
-FROM [Metrics].[MongoDBRightsizingRecommendations] r
-JOIN [Metrics].[MongoDBRightsizingAggregated5Min] a
-    ON  a.ClusterKey   = r.ClusterKey
-    AND a.[type]       = r.DayType
-    AND a.businessHour = r.HourType
-WHERE r.ClusterName IN (
-    'cwx-cwih-patient-mdm-qa',
-    'hqri-fhir-store-prd',
-    'ma-dep-prod',
-    'aiaa-app0002305-cld3-dev',
-    'stars-gic-prod',
-    'consumer-interops-prod'
+-- Drop old STL table
+IF OBJECT_ID('[Metrics].[MongoDBRightsizingRecommendations_STL]')
+   IS NOT NULL
+DROP TABLE [Metrics].[MongoDBRightsizingRecommendations_STL]
+GO
+
+-- Create fresh with correct columns
+CREATE TABLE [Metrics].[MongoDBRightsizingRecommendations_STL]
+(
+    Month                    CHAR(7),
+    ClusterKey               INT,
+    ClusterName              NVARCHAR(255),
+    OrgName                  NVARCHAR(255),
+    ProjectKey               INT,
+    ProviderName             NVARCHAR(255),
+    RegionName               NVARCHAR(255),
+    DayType                  NVARCHAR(50),
+    HourType                 NVARCHAR(50),
+    CurrentSku               NVARCHAR(100),
+    CurrentCostPrHour        FLOAT,
+    CpuRec                   NVARCHAR(100),
+    MemRec                   NVARCHAR(100),
+    ConnRec                  NVARCHAR(100),
+    CpuAvgP95                FLOAT,         ← replaces AvgCpuMax
+    CpuMaxP95                FLOAT,         ← new column
+    PeakCpuMax               FLOAT,         ← keeps peak
+    MemUtilizationPct        FLOAT,
+    ConnUtilizationPct       FLOAT,
+    RecommendedSku           NVARCHAR(255),
+    RecommendedCostPrHour    FLOAT,
+    EstimatedMonthlySavings  FLOAT,
+    Comment                  NVARCHAR(500),
+    MiscComment              NVARCHAR(500),
+    CurrentEfficiency        NVARCHAR(MAX),
+    WithinEfficiency         NVARCHAR(MAX),
+    LowCpuEfficiency         NVARCHAR(MAX),
+    Spend30days              FLOAT,
+    WithinFamilySavings      FLOAT,
+    LowCpuSku                NVARCHAR(100),
+    LowCpuSavings            FLOAT,
+    Action                   NVARCHAR(50),
+    AuditUtc                 DATETIME
 )
-AND r.Month  = '2026-06'
-AND r.Action = 'Upsize'
-GROUP BY
-    r.ClusterName, r.DayType,
-    r.HourType, r.Action
-ORDER BY CpuAvgP95 ASC
 GO
