@@ -78,14 +78,17 @@ def connect_to_db():
 
 
 def fetch_data(sql_query: str) -> pd.DataFrame:
+    conn = None
     try:
         conn = connect_to_db()
         data = pd.read_sql(sql_query, conn)
-        conn.close()
         return data
     except Exception as exc:
         print(f"Error fetching data: {exc}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 
 # ===========================================================================
@@ -210,7 +213,7 @@ def find_low_cpu_sku(standard_sku: str, specs: dict, provider: str, region: str)
     rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
     low_cpu_skus = [
         s for s in specs
-        if  specs[s].get("RAM_GB")           == rec_ram
+        if  abs(specs[s].get("RAM_GB", 0) - rec_ram) < 0.01   # float tolerance
         and specs[s].get("Tier", "").upper() == "LOW-CPU"
     ]
     if not low_cpu_skus:
@@ -227,7 +230,7 @@ def find_nvme_sku(standard_sku: str, specs: dict) -> str | None:
     rec_ram = specs.get(standard_sku, {}).get("RAM_GB", 0)
     nvme_skus = [
         s for s in specs
-        if  specs[s].get("RAM_GB")           == rec_ram
+        if  abs(specs[s].get("RAM_GB", 0) - rec_ram) < 0.01   # float tolerance
         and "NVME" in specs[s].get("Tier", "").upper()
     ]
     if not nvme_skus:
@@ -301,6 +304,17 @@ def _onseasonality(seasonality: pd.DataFrame, start_date: str, end_date: str, sk
 # ===========================================================================
 
 def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Simplified P95 threshold check per week.
+    Replaces KMeans approach which had a merge-on-arbitrary-cluster-number bug.
+
+    For each week:
+      Level2: if P95(MaxP95 × 4) < 100 AND P95(Max × 4) < 100 AND P95(AvgP95 × 4) < 100
+              → Action1 = 1 (safe to downsize 2 steps)
+      Level1: if P95(MaxP95 × 2) < 100 AND P95(AvgP95 × 2) < 100
+              → Action1 = 2 (safe to downsize 1 step)
+      Else:   → Action1 = 3 (risky)
+    """
     df    = data.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df["Week"] = df["Date"].dt.isocalendar().week
@@ -310,59 +324,40 @@ def perform_clustering_and_rightsizing(metric_type: str, data: pd.DataFrame) -> 
     for week, group in df.groupby("Week"):
         if len(group) < 3:
             continue
-        # Level 2 check — simulate 2 step downsize (multiply by 4)
-        # All 3 metrics must stay below 100% after x4
-        level2 = group[[f"{mt}MaxP95", f"{mt}Max", f"{mt}AvgP95"]].mul(4)
-        level2.columns = [f"{mt}MaxP952level", f"{mt}Max2level", f"{mt}AvgP952level"]
-        k2 = KMeans(n_clusters=3, random_state=42)
-        level2["Cluster"] = k2.fit_predict(level2)
-        c2 = level2.groupby("Cluster").quantile(0.95).reset_index()
-        c2["Week"] = week
 
-        # Level 1 check — simulate 1 step downsize (multiply by 2)
-        # Postgres pattern: only CpuMaxP95 and CpuAvgP95
-        # CpuMax NOT included here (causes all downsizes to fail)
-        # CpuMax only used in level2 (×4) check
-        level1 = group[[f"{mt}MaxP95", f"{mt}AvgP95"]].mul(2)
-        level1.columns = [f"{mt}MaxP951level", f"{mt}AvgP951level"]
-        k1 = KMeans(n_clusters=3, random_state=42)
-        level1["Cluster"] = k1.fit_predict(level1)
-        c1 = level1.groupby("Cluster").quantile(0.95).reset_index()
-        c1["Week"] = week
+        # Level 2 check (downsize 2 steps: ×4)
+        p95_max_p95_l2  = group[f"{mt}MaxP95"].quantile(0.95) * 4
+        p95_max_l2      = group[f"{mt}Max"].quantile(0.95) * 4
+        p95_avg_p95_l2  = group[f"{mt}AvgP95"].quantile(0.95) * 4
 
-        merged = pd.merge(c1, c2, on=["Cluster", "Week"])
-        result.append(merged)
+        level2_ok = (
+            p95_max_p95_l2 < 100
+            and p95_max_l2  < 100
+            and p95_avg_p95_l2 < 100
+        )
+
+        # Level 1 check (downsize 1 step: ×2)
+        p95_max_p95_l1  = group[f"{mt}MaxP95"].quantile(0.95) * 2
+        p95_avg_p95_l1  = group[f"{mt}AvgP95"].quantile(0.95) * 2
+
+        level1_ok = (
+            p95_max_p95_l1 < 100
+            and p95_avg_p95_l1 < 100
+        )
+
+        if level2_ok:
+            action1 = 1
+        elif level1_ok:
+            action1 = 2
+        else:
+            action1 = 3
+
+        result.append({"Week": week, "Action1": action1})
 
     if not result:
         return pd.DataFrame(columns=["Week", "Action1"])
 
-    final_df = pd.concat(result, ignore_index=True)
-
-    def assign_cluster(row: pd.Series) -> int:
-        # Level 2: can downsize 2 steps?
-        # CpuMaxP95 × 4, CpuMax × 4, CpuAvgP95 × 4
-        # ALL must be < 100%
-        c2_ok = (
-            row.get(f"{mt}MaxP952level", 101) < 100
-            and row.get(f"{mt}Max2level",    101) < 100
-            and row.get(f"{mt}AvgP952level", 101) < 100
-        )
-        # Level 1: can downsize 1 step?
-        # Exact Postgres pattern:
-        # Only CpuMaxP95 × 2 and CpuAvgP95 × 2
-        # Both must be < 100%
-        c1_ok = (
-            row.get(f"{mt}MaxP951level", 101) < 100
-            and row.get(f"{mt}AvgP951level", 101) < 100
-        )
-        if c2_ok:
-            return 1
-        if c1_ok:
-            return 2
-        return 3
-
-    final_df["Action1"] = final_df.apply(assign_cluster, axis=1)
-    return final_df
+    return pd.DataFrame(result)
 
 
 # ===========================================================================
@@ -464,12 +459,13 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
         final_idx = max(0, current_idx - 1)  # Downsize 1 step — remaining mixed-but-safe cases
 
     # Fix B: Final safety check — even if clustering says Downsize
-    # if CpuMaxP95×2 >= 100% it is unsafe → force NoChange
-    # Catches borderline cases like HCaaS-PRD-ClaimIngestor (P95×2=100.55%)
+    # if MetricMaxP95×2 >= 100% it is unsafe → force NoChange
+    # Uses metric-specific column (CPU or Memory) not hardcoded CPU
     if final_idx < current_idx:
-        cpu_max_p95_check = _safe_quantile(df["CpuMaxP95"], 0.95) \
-                            if "CpuMaxP95" in df.columns else 0.0
-        if cpu_max_p95_check * 2 >= 100:
+        p95_col = f"{mt}MaxP95"
+        metric_p95_check = _safe_quantile(df[p95_col], 0.95) \
+                           if p95_col in df.columns else 0.0
+        if metric_p95_check * 2 >= 100:
             final_idx = current_idx  # NoChange — P95×2 safety fails
 
     return [(ordered_tiers[final_idx], final_idx, "")]
@@ -709,7 +705,8 @@ def calculate_efficiency(data: pd.DataFrame, actual_sku: str, recommended_sku: s
 
 def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
                     provider_name: str, region_name: str, config: dict,
-                    metacache: dict, spend_data: dict = {}) -> dict | None:
+                    metacache: dict, spend_data: dict = None) -> dict | None:
+    spend_data = spend_data or {}
 
     start_date = config["StartDate"]
     end_date   = config["EndDate"]
@@ -817,6 +814,9 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     spend_30_days             = cluster_spend.get("ActualSpend",
                                 current_cost * hours_in_month)
     estimated_monthly_savings = (current_cost - recommended_cost) * hours_in_month
+    # Note: Negative value when Upsize (recommended_cost > current_cost)
+    # This is intentional — negative savings = additional cost for Upsize
+    # Shown as negative in table so leadership sees the cost impact clearly
 
     comment = "High Connections — Review Connection Pooling" if conn_only_upsize \
               else component_comment(cpu_idx, mem_idx, conn_idx, current_idx,
@@ -829,7 +829,6 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     )
 
     hour_type            = "Weekend" if day_type == "Weekend" else bh
-    avg_cpu_max          = _safe_mean(data["CpuMax"])                       if "CpuMax"             in data.columns else 0.0
     peak_cpu_max         = _safe_max(data["CpuMax"])                        if "CpuMax"             in data.columns else 0.0
     avg_cpu_p95          = round(_safe_quantile(data["CpuAvgP95"], 0.95)
                            if "CpuAvgP95" in data.columns else 0.0, 4)
@@ -1027,8 +1026,8 @@ if __name__ == "__main__":
             for t, bh, bh1 in zip(types, business_hours, business_hours1)
         ]
 
-    out_df    = pd.DataFrame(columns=INSERT_COLUMNS)
-    metacache = {}
+    results_list = []  # collect results in list → concat once at end (avoids O(n²))
+    metacache    = {}
 
     for month, configs in month_dict.items():
         print(f"Running for month: {month}")
@@ -1068,7 +1067,11 @@ if __name__ == "__main__":
                 result["ProviderName"] = provider_name
                 result["RegionName"]   = region_name
 
-                out_df = pd.concat([out_df, pd.DataFrame([result])], ignore_index=True)
+                results_list.append(result)
+
+    # Concat once — avoids O(n²) performance issue
+    out_df = pd.DataFrame(results_list, columns=INSERT_COLUMNS) \
+             if results_list else pd.DataFrame(columns=INSERT_COLUMNS)
 
     if not out_df.empty:
         print(f"Total recommendations: {len(out_df)}")
