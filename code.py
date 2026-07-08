@@ -63,4 +63,16 @@ JOIN (
     GROUP BY ClusterKey
 ) a ON a.ClusterKey = c.ClustersKey
 WHERE c.StateName IN ('IDLE','UPDATING')
-AND   c.Paused
+AND   c.Paused     = 0
+AND   JSON_VALUE(c.ReplicationSpecs,
+        '$[0].regionConfigs[0].autoScaling.compute.enabled') = 'true'
+GROUP BY
+    CASE
+        WHEN JSON_VALUE(c.ReplicationSpecs,
+            '$[0].regionConfigs[0].electableSpecs.instanceSize')
+             != a.ActualSku
+        THEN 'DIFFERENT ⚠️'
+        ELSE 'Same ✅'
+    END
+ORDER BY ClusterCount DESC
+GO
