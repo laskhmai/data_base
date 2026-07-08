@@ -1,16 +1,34 @@
--- Check every hour of data for cdr-dev in June
-SELECT
-    _date,
-    _hour,
-    [type]                          AS DayType,
-    businessHour                    AS HourType,
-    ROUND(CpuAvg,    2)            AS CpuAvg,
-    ROUND(CpuMax,    2)            AS CpuMax,
-    ROUND(CpuMaxP95, 2)            AS CpuMaxP95,
-    ROUND(CpuAvgP95, 2)            AS CpuAvgP95,
-    MaxCpuProcessId
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'cdr-dev'
-AND   FORMAT(_date,'yyyy-MM') = '2026-06'
-ORDER BY _date, _hour
-GO
+Hi Neeraja garu,
+
+No problem! I will share the update here.
+
+Previously we had clusters getting NoChange 
+even though they were safe to Downsize.
+
+After the code fix, those clusters are now 
+correctly getting Downsize recommendations.
+
+For example:
+  nlp-prod (M40):
+    CpuMaxP95 = 13% (very low)
+    Before fix: NoChange ❌
+    After fix:  Downsize ✅
+
+  cc-atlas-dev-1 (M10):
+    CpuMaxP95 = 31%
+    Before fix: NoChange ❌
+    After fix:  Downsize ✅
+
+Root cause was: trend detection was marking 
+clusters as risky even when CPU values were 
+very low (13-35%), because it detected a 
+small week-over-week increase.
+
+Fix: We now only consider trend as risky if 
+CpuMaxP95 × 2 > 50%. For very low CPU 
+clusters the trend is irrelevant.
+
+Could you please verify these look correct 
+when you get a chance?
+
+Thank you!
