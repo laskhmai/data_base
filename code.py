@@ -1,34 +1,24 @@
 Hi Neeraja garu,
 
-No problem! I will share the update here.
+Yes andi, that is correct.
 
-Previously we had clusters getting NoChange 
-even though they were safe to Downsize.
+We only Upsize when CpuMax is consistently high across multiple weeks, not just a single week or single hour spike.
 
-After the code fix, those clusters are now 
-correctly getting Downsize recommendations.
+Our logic:
+  1. We check CpuMaxP95 per week
+  2. If peak value > 80% across most weeks
+     → Upsize
+  3. If only one week has high CPU
+     → NoChange (not Upsize)
+     (single spike does not justify upsize)
 
-For example:
-  nlp-prod (M40):
-    CpuMaxP95 = 13% (very low)
-    Before fix: NoChange ❌
-    After fix:  Downsize ✅
+Example:
+  Week 1: CpuMaxP95 = 85%
+  Week 2: CpuMaxP95 = 82%
+  Week 3: CpuMaxP95 = 90%
+  → Consistently high → Upsize ✅
 
-  cc-atlas-dev-1 (M10):
-    CpuMaxP95 = 31%
-    Before fix: NoChange ❌
-    After fix:  Downsize ✅
-
-Root cause was: trend detection was marking 
-clusters as risky even when CPU values were 
-very low (13-35%), because it detected a 
-small week-over-week increase.
-
-Fix: We now only consider trend as risky if 
-CpuMaxP95 × 2 > 50%. For very low CPU 
-clusters the trend is irrelevant.
-
-Could you please verify these look correct 
-when you get a chance?
-
-Thank you!
+  Week 1: CpuMaxP95 = 85%
+  Week 2: CpuMaxP95 = 20%
+  Week 3: CpuMaxP95 = 18%
+  → Only one spike → NoChange ❌ not Upsize
