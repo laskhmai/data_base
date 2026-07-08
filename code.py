@@ -447,27 +447,16 @@ def recommendations(metric_type: str, data: pd.DataFrame, actual_sku: str, order
     # Peak value: use P95 of P95 values — avoids single spike triggering ScaleUp
     peak_val = _safe_quantile(df[f"{mt}MaxP95"], 0.95) if f"{mt}MaxP95" in df.columns else 0.0
 
-    # Pre-compute P95 per week for trend threshold check
-    # Only care about increasing trend if values are high enough to matter
-    # (p95_val × 2 > 50% means trend could push into risky territory)
-    df["Week"] = pd.to_datetime(df["Date"]).dt.isocalendar().week
-    weekly_p95 = df.groupby("Week")[f"{mt}MaxP95"].quantile(0.95) \
-                 if f"{mt}MaxP95" in df.columns else {}
-
     weekly_actions = []
     for i, (_, row) in enumerate(weekly.iterrows()):
         a1 = int(row["Action1"])
         ts = trend_status[i - 1] if i > 0 and i - 1 < len(trend_status) else "No trend"
 
-        # Get this week's P95 value
-        week_num = row["Week"]
-        p95_val_week = weekly_p95.get(week_num, 0.0) \
-                       if hasattr(weekly_p95, 'get') else 0.0
-
         # Only flag trend as risky if values are actually meaningful
-        # If p95_val_week × 2 < 50% then even doubling load is still safe
-        # e.g. CPU 11→13% trend: 13% × 2 = 26% → still very safe → ignore trend
-        trend_matters = ts == "Increasing" and p95_val_week * 2 > 50
+        # peak_val = P95 of CpuMaxP95 across whole month
+        # If peak_val × 2 < 50% then even doubling load is still safe
+        # e.g. CPU trending 11→13%: peak_val=13% × 2=26% → still safe → ignore trend
+        trend_matters = ts == "Increasing" and peak_val * 2 > 50
 
         if trend_matters or a1 == 3:
             if peak_val > 80:   # Genuinely high load → ScaleUp
