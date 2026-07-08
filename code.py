@@ -1,32 +1,16 @@
--- Check 1 month of metric data for cdr-dev (key 326)
--- See what data we have collected
+-- Check every hour of data for cdr-dev in June
 SELECT
-    FORMAT(_date,'yyyy-MM-dd')      AS Date,
-    COUNT(*)                        AS HourlyRows,
-    ROUND(AVG(CpuAvg),    2)       AS AvgCpuAvg,
-    ROUND(AVG(CpuMax),    2)       AS AvgCpuMax,
-    ROUND(MAX(CpuMax),    2)       AS PeakCpuMax,
-    ROUND(AVG(CpuMaxP95), 2)       AS CpuMaxP95,
-    MIN(_hour)                      AS FirstHour,
-    MAX(_hour)                      AS LastHour
+    _date,
+    _hour,
+    [type]                          AS DayType,
+    businessHour                    AS HourType,
+    ROUND(CpuAvg,    2)            AS CpuAvg,
+    ROUND(CpuMax,    2)            AS CpuMax,
+    ROUND(CpuMaxP95, 2)            AS CpuMaxP95,
+    ROUND(CpuAvgP95, 2)            AS CpuAvgP95,
+    MaxCpuProcessId
 FROM [Metrics].[MongoDBRightsizingAggregated5Min]
 WHERE ClusterName = 'cdr-dev'
 AND   FORMAT(_date,'yyyy-MM') = '2026-06'
-ORDER BY _date
-GO
-
--- Summary for cdr-dev June
-SELECT
-    ClusterName,
-    COUNT(DISTINCT _date)           AS DaysWithData,
-    COUNT(*)                        AS TotalHourlyRows,
-    MIN(_date)                      AS DataFrom,
-    MAX(_date)                      AS DataTo,
-    ROUND(AVG(CpuMax),    2)       AS AvgCpuMax,
-    ROUND(MAX(CpuMax),    2)       AS PeakCpuMax,
-    ROUND(AVG(CpuMaxP95), 2)       AS AvgCpuMaxP95
-FROM [Metrics].[MongoDBRightsizingAggregated5Min]
-WHERE ClusterName = 'cdr-dev'
-AND   FORMAT(_date,'yyyy-MM') = '2026-06'
-GROUP BY ClusterName
+ORDER BY _date, _hour
 GO
