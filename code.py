@@ -928,11 +928,11 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
         low_cpu_sku  = None
         low_cpu_cost = 0.0
 
-        low_cpu_savings = round(
-            (current_cost - low_cpu_cost) * hours_in_month, 2
-        ) if low_cpu_sku and low_cpu_cost < current_cost else 0.0
+    low_cpu_savings = round(
+        (current_cost - low_cpu_cost) * hours_in_month, 2
+    ) if low_cpu_sku and low_cpu_cost < current_cost else 0.0
 
-        recommended_sku_display = f"{overall_sku}, {low_cpu_sku}" if low_cpu_sku else overall_sku
+    recommended_sku_display = f"{overall_sku}, {low_cpu_sku}" if low_cpu_sku else overall_sku
 
     eff = calculate_efficiency(data, actual_sku, overall_sku, specs)
 
