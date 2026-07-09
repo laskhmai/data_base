@@ -919,20 +919,14 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     low_cpu_sku  = None
     nvme_sku     = None
 
-    if conn_only_upsize:
-        # Connection-only → suggest NVMe (better IOPS) instead of Low-CPU
-        nvme_sku = find_nvme_sku(overall_sku, specs)
-        recommended_sku_display = f"{overall_sku}, {nvme_sku}" if nvme_sku else overall_sku
-        low_cpu_savings = 0.0
-    else:
-        # Normal Downsize / Upsize → suggest Low-CPU alternative
-        low_cpu_sku  = find_low_cpu_sku(overall_sku, specs, prov, reg)
-        low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
+    # Normal Downsize / Upsize → suggest Low-CPU alternative
+    low_cpu_sku  = find_low_cpu_sku(overall_sku, specs, prov, reg)
+    low_cpu_cost = specs.get(low_cpu_sku, {}).get("CostPrHour", 0.0) if low_cpu_sku else 0.0
 
-        # Skip Low-CPU if peak CPU is high (fewer vCores would be risky)
-        if low_cpu_sku and peak_cpu_max > 50:
-            low_cpu_sku  = None
-            low_cpu_cost = 0.0
+    # Skip Low-CPU if peak CPU is high (fewer vCores would be risky)
+    if low_cpu_sku and peak_cpu_max > 50:
+        low_cpu_sku  = None
+        low_cpu_cost = 0.0
 
         low_cpu_savings = round(
             (current_cost - low_cpu_cost) * hours_in_month, 2
