@@ -918,24 +918,45 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     hours_in_month            = _hours_in_range(start_date, end_date)
 
     # Spend30days → actual total billing from MongoDB.Spend table ✅
-    # ActualCostPrHour → actual instance price per hour from Spend ✅
-    # EstimatedMonthlySavings → (actual current price - MetaConfig recommended) × hours
+    # EstimatedMonthlySavings → based on actual billing rate (Option 2)
+    # 
+    # Logic:
+    #   1. Get actual cost per hour from Spend (discounted rate)
+    #   2. Calculate discount ratio = actual / MetaConfig list
+    #   3. Estimate recommended actual price = MetaConfig_rec × ratio
+    #   4. Savings = (actual_current - estimated_recommended) × hours
+    #
+    # This gives realistic savings based on what Humana actually pays
+    # rather than list prices which overestimate savings
     cluster_spend          = spend_data.get(cluster_name, {})
     spend_30_days          = cluster_spend.get("ActualSpend",
                              current_cost * hours_in_month)
     actual_cost_hr         = cluster_spend.get("ActualCostPrHour", None)
 
-    # Use actual billing rate if available, else fall back to MetaConfig
-    effective_current_cost = actual_cost_hr if actual_cost_hr else current_cost
-
     # If same SKU → savings = 0 (no change made)
-    # Otherwise: actual current cost minus MetaConfig recommended cost
     if overall_sku == actual_sku:
         estimated_monthly_savings = 0.0
+
+    # If actual billing rate available → use discount ratio approach
+    elif actual_cost_hr and actual_cost_hr > 0 and current_cost > 0:
+        discount_ratio = actual_cost_hr / current_cost
+        # Cap ratio at 1.0 — if actual > list something is wrong
+        # Fall back to MetaConfig in that case
+        if 0 < discount_ratio <= 1.0:
+            estimated_recommended = recommended_cost * discount_ratio
+            estimated_monthly_savings = (actual_cost_hr - estimated_recommended) \
+                                        * hours_in_month
+        else:
+            # Unexpected ratio → fall back to MetaConfig comparison
+            estimated_monthly_savings = (current_cost - recommended_cost) \
+                                        * hours_in_month
+
+    # No Spend data → fall back to MetaConfig list price comparison
     else:
-        estimated_monthly_savings = (effective_current_cost - recommended_cost) * hours_in_month
-    # Note: Negative value when Upsize (recommended_cost > current_cost)
-    # This is intentional — negative savings = additional cost for Upsize
+        estimated_monthly_savings = (current_cost - recommended_cost) \
+                                    * hours_in_month
+    # Note: Negative value when Upsize (recommended cost > current cost)
+    # This is intentional — shows additional cost for Upsize decision
 
     comment = "High Connections — Review Connection Pooling" if max_conn_pct > 80 and overall_idx == current_idx \
               else component_comment(cpu_idx, mem_idx, conn_idx, current_idx,
