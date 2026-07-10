@@ -975,6 +975,8 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     # EstimatedMonthlySavings → based on actual billing rate + discount lookup
     # discount_lookup gives per-SKU per-Provider discount ratio
     # Azure ~0.32, GCP ~0.29 (different discounts per provider!)
+    prov                   = str(provider_name).upper()
+    reg                    = str(region_name).upper()
     cluster_spend          = spend_data.get(cluster_name, {})
     spend_30_days          = cluster_spend.get("ActualSpend",
                              current_cost * hours_in_month)
@@ -1027,8 +1029,6 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     audit_utc            = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Low-CPU alternative (for Downsize / Upsize)
-    prov         = str(provider_name).upper()
-    reg          = str(region_name).upper()
     low_cpu_sku  = None
     nvme_sku     = None
 
