@@ -1,45 +1,22 @@
--- Summary of recommendations by Action
-SELECT
-    Action,
-    COUNT(DISTINCT ClusterKey)          AS UniqueClusters,
-    COUNT(*)                            AS TotalSlices,
-    ROUND(SUM(EstimatedMonthlySavings), 2) AS TotalEstimatedSavings,
-    ROUND(AVG(EstimatedMonthlySavings), 2) AS AvgSavingsPerSlice,
-    ROUND(SUM(Spend30days), 2)          AS TotalActualSpend
-FROM [Metrics].[MongoDBRightsizingRecommendations_STL]
-WHERE Month = '2026-06'
-GROUP BY Action
-ORDER BY Action
-GO
 
--- Detailed Downsize savings by cluster
-SELECT
-    ClusterName,
-    CurrentSku,
-    RecommendedSku,
-    DayType,
-    HourType,
-    ROUND(EstimatedMonthlySavings, 2)   AS EstimatedMonthlySavings,
-    ROUND(Spend30days, 2)               AS ActualSpend30days,
-    Comment
-FROM [Metrics].[MongoDBRightsizingRecommendations_STL]
-WHERE Month  = '2026-06'
-AND   Action = 'Downsize'
-ORDER BY EstimatedMonthlySavings DESC
-GO
 
--- Detailed Upsize cost impact by cluster
-SELECT
-    ClusterName,
-    CurrentSku,
-    RecommendedSku,
-    DayType,
-    HourType,
-    ROUND(EstimatedMonthlySavings, 2)   AS EstimatedMonthlyCost,
-    ROUND(Spend30days, 2)               AS ActualSpend30days,
-    Comment
-FROM [Metrics].[MongoDBRightsizingRecommendations_STL]
-WHERE Month  = '2026-06'
-AND   Action = 'Upsize'
-ORDER BY EstimatedMonthlySavings ASC
-GO
+Just wanted to share a quick update:
+
+We have made the following changes to the recommendations logic:
+
+1. Peak CPU check added — even if P95 is low, if raw CpuMax peak × 2 > 100% we mark it as NoChange (cluster could hit capacity after downsize)
+
+2. Seasonality detection — using STL decomposition to identify repeating patterns (e.g. weekend batch jobs). Seasonal clusters get NoChange
+
+3. Connections logic fixed — high connections now correctly blocks Downsize with comment "Review Connection Pooling"
+
+4. Savings calculation improved — using actual billing rates from Spend table with provider-specific discount ratios (Azure ~32%, GCP ~29%)
+
+Please review when you get a chance:
+[Metrics].[MongoDBRightsizingRecommendations_STL]
+
+One pending topic I wanted to discuss with you:
+
+We have 307 out of 327 clusters with autoscaling enabled. These clusters have a configured minimum SKU (e.g. M50) but can scale up to a maximum SKU (e.g. M80) during high load.
+
+Currently our recommendations are based on the configured minimum SKU. But the metrics are collected at the actual running SKU (which could be M80).
