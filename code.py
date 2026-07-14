@@ -1106,16 +1106,6 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     # Note: Negative value when Upsize (recommended cost > current cost)
     # This is intentional — shows additional cost for Upsize decision
 
-    comment = "High Connections — Review Connection Pooling" if max_conn_pct > 80 and overall_idx == current_idx \
-              else component_comment(cpu_idx, mem_idx, conn_idx, current_idx,
-                                     mem_skipped=SKIP_MEMORY_RECOMMENDATIONS,
-                                     max_conn_pct=max_conn_pct)
-
-    # Prepend autoscale note to comment for autoscaling clusters
-    if autoscale_enabled and autoscale_note:
-        comment = f"Auto-Scaling ({min_sku_norm or '?'}→{max_sku_norm or '?'}): " \
-                  f"{autoscale_note} ; {comment}"
-
     hour_type            = "Weekend" if day_type == "Weekend" else bh
     peak_cpu_max         = _safe_max(data["CpuMax"])                        if "CpuMax"             in data.columns else 0.0
     avg_cpu_p95          = round(_safe_quantile(data["CpuAvgP95"], 0.95)
@@ -1124,6 +1114,7 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
                            if "CpuMaxP95" in data.columns else 0.0, 4)
     mem_utilization_pct  = _safe_quantile(data["MemResidentMaxPct"], 0.95) if "MemResidentMaxPct"  in data.columns else 0.0
     conn_utilization_pct = _safe_quantile(data["ConnUtilizationPct"], 0.95) if "ConnUtilizationPct" in data.columns else 0.0
+
     # -----------------------------------------------------------------------
     # Auto-scaling reconciliation
     # When autoscaling ON: Atlas floats size within [min,max]
@@ -1151,6 +1142,16 @@ def process_cluster(cluster_key: int, cluster_name: str, instance_size: str,
     action = autoscale_action if autoscale_enabled \
              else _action_label(actual_sku, overall_sku, ordered_tiers)
     audit_utc            = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    comment = "High Connections — Review Connection Pooling" if max_conn_pct > 80 and overall_idx == current_idx \
+              else component_comment(cpu_idx, mem_idx, conn_idx, current_idx,
+                                     mem_skipped=SKIP_MEMORY_RECOMMENDATIONS,
+                                     max_conn_pct=max_conn_pct)
+
+    # Prepend autoscale note to comment for autoscaling clusters
+    if autoscale_enabled and autoscale_note:
+        comment = f"Auto-Scaling ({min_sku_norm or '?'}→{max_sku_norm or '?'}): " \
+                  f"{autoscale_note} ; {comment}"
 
     # Low-CPU alternative (for Downsize / Upsize)
     low_cpu_sku  = None
