@@ -1,11 +1,31 @@
-SELECT DISTINCT
-    a.InstanceSize,
-    COUNT(*) AS HourCount
-FROM [Metrics].[MongoDBRightsizingAggregated5Min] a
-JOIN [MongoDB].[Clusters] c
-    ON c.ClustersKey = a.ClusterKey
-WHERE c.Name = 'labelh-dev'
-AND FORMAT(a._date,'yyyy-MM') = '2026-06'
-GROUP BY a.InstanceSize
-ORDER BY HourCount DESC
+SELECT
+    s.ClusterName,
+    s.DayType,
+    s.HourType,
+    s.CurrentSku
+FROM [Metrics].[MongoDBRightsizingRecommendations_STL] s
+WHERE s.Month = '2026-06'
+AND NOT EXISTS (
+    SELECT 1
+    FROM [Metrics].[MongoDBRightsizingRecommendations] n
+    WHERE n.ClusterKey = s.ClusterKey
+    AND   n.DayType    = s.DayType
+    AND   n.HourType   = s.HourType
+    AND   n.Month      = s.Month
+)
+ORDER BY s.ClusterName
+GO
+
+-- Count of missing
+SELECT COUNT(*) AS MissingRows
+FROM [Metrics].[MongoDBRightsizingRecommendations_STL] s
+WHERE s.Month = '2026-06'
+AND NOT EXISTS (
+    SELECT 1
+    FROM [Metrics].[MongoDBRightsizingRecommendations] n
+    WHERE n.ClusterKey = s.ClusterKey
+    AND   n.DayType    = s.DayType
+    AND   n.HourType   = s.HourType
+    AND   n.Month      = s.Month
+)
 GO
