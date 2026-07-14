@@ -1,22 +1,62 @@
+-- Step 1: Drop existing Normal recommendations table
+IF OBJECT_ID('[Metrics].[MongoDBRightsizingRecommendations]')
+   IS NOT NULL
+DROP TABLE [Metrics].[MongoDBRightsizingRecommendations]
+GO
 
+-- Step 2: Recreate with all columns including autoscaling
+CREATE TABLE [Metrics].[MongoDBRightsizingRecommendations]
+(
+    Month                    CHAR(7),
+    ClusterKey               INT,
+    ClusterName              NVARCHAR(255),
+    OrgName                  NVARCHAR(255),
+    ProjectKey               INT,
+    ProviderName             NVARCHAR(255),
+    RegionName               NVARCHAR(255),
+    DayType                  NVARCHAR(50),
+    HourType                 NVARCHAR(50),
+    CurrentSku               NVARCHAR(100),
+    CurrentCostPrHour        FLOAT,
+    CpuRec                   NVARCHAR(100),
+    MemRec                   NVARCHAR(100),
+    ConnRec                  NVARCHAR(100),
+    CpuAvgP95                FLOAT,
+    CpuMaxP95                FLOAT,
+    PeakCpuMax               FLOAT,
+    MemUtilizationPct        FLOAT,
+    ConnUtilizationPct       FLOAT,
+    RecommendedSku           NVARCHAR(255),
+    RecommendedCostPrHour    FLOAT,
+    EstimatedMonthlySavings  FLOAT,
+    Comment                  NVARCHAR(500),
+    CurrentEfficiency        NVARCHAR(MAX),
+    WithinEfficiency         NVARCHAR(MAX),
+    LowCpuEfficiency         NVARCHAR(MAX),
+    Spend30days              FLOAT,
+    WithinFamilySavings      FLOAT,
+    LowCpuSku                NVARCHAR(100),
+    LowCpuSavings            FLOAT,
+    Action                   NVARCHAR(50),
+    -- Auto-scaling columns
+    AutoScaleEnabled         BIT           NULL,
+    ScaleDownEnabled         BIT           NULL,
+    MinInstanceSize          NVARCHAR(20)  NULL,
+    MaxInstanceSize          NVARCHAR(20)  NULL,
+    RecommendedMinSku        NVARCHAR(20)  NULL,
+    RecommendedMaxSku        NVARCHAR(20)  NULL,
+    SavingsBasis             NVARCHAR(30)  NULL,
+    AuditUtc                 DATETIME
+)
+GO
 
-Just wanted to share a quick update:
-
-We have made the following changes to the recommendations logic:
-
-1. Peak CPU check added — even if P95 is low, if raw CpuMax peak × 2 > 100% we mark it as NoChange (cluster could hit capacity after downsize)
-
-2. Seasonality detection — using STL decomposition to identify repeating patterns (e.g. weekend batch jobs). Seasonal clusters get NoChange
-
-3. Connections logic fixed — high connections now correctly blocks Downsize with comment "Review Connection Pooling"
-
-4. Savings calculation improved — using actual billing rates from Spend table with provider-specific discount ratios (Azure ~32%, GCP ~29%)
-
-Please review when you get a chance:
-[Metrics].[MongoDBRightsizingRecommendations_STL]
-
-One pending topic I wanted to discuss with you:
-
-We have 307 out of 327 clusters with autoscaling enabled. These clusters have a configured minimum SKU (e.g. M50) but can scale up to a maximum SKU (e.g. M80) during high load.
-
-Currently our recommendations are based on the configured minimum SKU. But the metrics are collected at the actual running SKU (which could be M80).
+-- Step 3: Verify columns created correctly
+SELECT
+    COLUMN_NAME,
+    DATA_TYPE,
+    IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'Metrics'
+AND   TABLE_NAME   = 'MongoDBRightsizingRecommendations'
+ORDER BY ORDINAL_POSITION
+GO
