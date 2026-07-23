@@ -1,63 +1,20 @@
--- HEAP with ROUND ROBIN distribution
-CREATE TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP]
-(
-      billing_date                    DATE            NOT NULL
-    , resource_id                     NVARCHAR(1000)  NOT NULL
-    , vendor_account_name             NVARCHAR(500)
-    , vendor                          NVARCHAR(50)    NOT NULL
-    , overall_amortized_spend         DECIMAL(18,6)
-    , operation_cost                  NVARCHAR(MAX)   -- JSON
-    , operation_usage                 NVARCHAR(MAX)   -- JSON
-    , overall_usage_quantity          DECIMAL(18,6)
-    , gcp_resource_name               NVARCHAR(500)
-    , gcp_project                     NVARCHAR(500)
-    , service_name                    NVARCHAR(500)
-    , usage_family_cost               NVARCHAR(MAX)   -- JSON
-    , usage_family_quantity           NVARCHAR(MAX)   -- JSON
-    , usage_types                     NVARCHAR(MAX)
-    , vendor_account_identifier       NVARCHAR(500)
-    , region                          NVARCHAR(200)
-    , updated_date                    DATE
-    , last_modified_date              DATE
-    , reservation_identifier_cost     NVARCHAR(MAX)   -- JSON
-    , humana_applicationid_cost       NVARCHAR(MAX)   -- JSON
-    , humana_resourceid_cost          NVARCHAR(MAX)   -- JSON
-)
-WITH
-(
-    DISTRIBUTION = ROUND_ROBIN,  -- because NVARCHAR(MAX) exists
-    HEAP                         -- cannot use CCI with NVARCHAR(MAX)
-)
-GO
-
--- Same for Staging Table
-CREATE TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP_Staging]
-(
-      billing_date                    DATE
-    , resource_id                     NVARCHAR(1000)
-    , vendor_account_name             NVARCHAR(500)
-    , vendor                          NVARCHAR(50)
-    , overall_amortized_spend         DECIMAL(18,6)
-    , operation_cost                  NVARCHAR(MAX)
-    , operation_usage                 NVARCHAR(MAX)
-    , overall_usage_quantity          DECIMAL(18,6)
-    , gcp_resource_name               NVARCHAR(500)
-    , gcp_project                     NVARCHAR(500)
-    , service_name                    NVARCHAR(500)
-    , usage_family_cost               NVARCHAR(MAX)
-    , usage_family_quantity           NVARCHAR(MAX)
-    , usage_types                     NVARCHAR(MAX)
-    , vendor_account_identifier       NVARCHAR(500)
-    , region                          NVARCHAR(200)
-    , updated_date                    DATE
-    , last_modified_date              DATE
-    , reservation_identifier_cost     NVARCHAR(MAX)
-    , humana_applicationid_cost       NVARCHAR(MAX)
-    , humana_resourceid_cost          NVARCHAR(MAX)
-)
-WITH
-(
-    DISTRIBUTION = ROUND_ROBIN,
-    HEAP
-)
-GO
+SELECT 
+     CONVERT(DATE, s.[date])        AS billing_date
+    , s.resource_id
+    , s.vendor_account_name         AS gcp_project
+    , s.vendor
+    , s.service_name
+    , s.region
+    , s.[Azure_Resource_Name]       AS gcp_resource_name
+    , s.Humana_Application_ID
+    , s.[Humana_Resource_ID(tag23)]
+    , s.[Operation]
+    , ISNULL(s.amortized_spend, 0)  AS amortized_spend
+    , ISNULL(s.usage_quantity, 0)   AS usage_quantity
+    , s.usage_family
+    , s.usage_type
+    , s.reservation_identifier
+FROM [Cloudability].[Daily_Spend] s
+WHERE s.vendor = 'GCP'
+  AND CONVERT(DATE, s.[date]) = '2026-07-15'  -- pick a date you know has data
+ORDER BY s.resource_id
