@@ -1,9 +1,13 @@
--- Check what max values exist in GCP
-SELECT 
-     MAX(amortized_spend)  AS max_spend
-    , MIN(amortized_spend) AS min_spend
-    , MAX(usage_quantity)  AS max_qty
-    , MIN(usage_quantity)  AS min_qty
-FROM [Cloudability].[Daily_Spend]
-WHERE vendor = 'GCP'
-AND date = '2026-07-15'
+-- Fix staging table
+ALTER TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP_Staging]
+ALTER COLUMN overall_amortized_spend FLOAT
+
+ALTER TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP_Staging]
+ALTER COLUMN overall_usage_quantity FLOAT
+
+-- Fix main table
+ALTER TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP]
+ALTER COLUMN overall_amortized_spend FLOAT
+
+ALTER TABLE [Silver].[Cloudability_Daily_Resource_Cost_GCP]
+ALTER COLUMN overall_usage_quantity FLOAT
