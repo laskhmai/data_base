@@ -1,183 +1,197 @@
-It didn’t come in the morning for some reason, but maybe it will come tomorrow or the day after.
+You: Yes. Yesterday when I checked the data you gave me, I noticed that some data was missing for GCP. When I originally loaded it, some dates were missing. For some dates, only partial data was available.
 
-“Okay, okay.”
+So I backfilled that data, ran it again, and checked everything normally. Now we have around 45 days of complete data. The data you gave me yesterday was from around July 8, right? From around July 8/10 onward, we have the complete data after the backfill.
 
-So, I mean, you said you were a bit free. We need to validate these GCP anomalies. I actually don’t have time to validate the report.
+Lead: Okay. Then finally, after doing the remaining backfill, one thing I want you to do is check whether seasonality can be added.
 
-“Okay, okay, yeah.”
+If it cannot be added, let's see what percentage of the results are at least correct, because when I checked, most of them were okay.
 
-So basically, this is a report.
+You: Yeah. There is just one issue. One particular type is not getting detected. Some new resources were added last month.
 
-“Okay.”
+What is happening is that their daily amount/cost is gradually increasing every day. So the model is considering that as expected behavior, basically normal behavior.
 
-One minute. We should have it in the DB also. I’ll give you the script.
+That's why that particular case isn't getting detected. Apart from that, everything else in the data seems to be correct.
 
-“Okay.”
+Lead: Okay. Then finally, check the seasonality.
 
-Actually, it will come into the table. There will also be another Silver table where you have all the resources. For Azure, I already created it.
+Another thing I want you to do is put your email address in the script and send an email to yourself.
 
-It is called Silver Anomaly Results.
+You: Okay.
 
-Basically, that one is for Azure. Similarly, I will create one for GCP in the Silver table.
+Lead: And in that email, what I want you to do is make the necessary changes to support GCP.
 
-“Okay.”
+Because, as far as I know, the current email has Azure-related content. I think I changed most of it, but after that I didn't completely review the entire email because we wanted to validate everything first.
 
-So, in the Silver table, you will have results for all the resources.
+You: Okay, sure. I'll check it.
 
-“Okay.”
+Lead: And one thing I observed is that the resource names are very different. In some cases, we're just getting numbers.
 
-But when it comes to the Gold table, if we have a delta of more than $50, then it will come into this table.
+We have to identify whether those are the actual resource names, or whether we're getting only those values from Cloudability.
 
-“Okay.”
+You: Yeah, those are coming from Cloudability.
 
-But what I want you to do is: we have the aggregation table, right? From that, identify whether whatever anomalies we are getting are actually anomalies or not.
+Lead: Right. We should also check once in the GCP assets. If the same thing is there, then that's fine.
 
-“Okay, okay. Understood.”
+Because with just a number, we can't really identify the resource. That's my only concern.
 
-Yeah. Some might be missed and some might not be missed. Check whether the ones that are coming are coming properly. Do it for multiple days, maybe take around five days.
+You: Yeah. Actually, when I checked the aggregation table, I checked that too.
 
-“Okay.”
+Even with the Cloudability account/resource name, I'm seeing some different kinds of names rather than normal readable names.
 
-And once this is done, I think I’m going to schedule the Gold table today. I’ll give you the script. You can directly insert the data into the table and directly verify it.
+I checked the asset table, and there is another main table as well. I checked there too.
 
-“Okay.”
+I saw the same name there. There was no difference at all.
 
-It will also generate an email. I’ll add your ID to that email. It should be somewhere near the end of the script.
+Lead: Okay, okay.
 
-“Okay.”
+You: Even when I was preparing the data, I checked it against two tables and also checked the cloud data.
 
-And one more thing: if we create/load the Silver table, there will be a lot of data. If you need the Silver table, tell me. I’ll create a separate process for it.
+I wanted to make sure that I hadn't made some manual mistake, but I'm getting the same result/data everywhere.
 
-Because if you have too many resources, loading them directly from Python takes a lot of time.
+So I'm almost 100% sure that's what we're receiving.
 
-“Okay, okay.”
+Lead: Okay. But once, run the email and see what changes we have to make.
 
-For Azure, what I do is put it into storage and then move it to the DB.
+Check whether there are any issues with spacing, formatting, or anything like that.
 
-“Okay.”
+You: Yeah, sure. I'll check.
 
-For GCP, I think we have less than 200K resources. But it will still take a lot of time to insert all of them right now.
+Lead: Okay.
 
-“Okay, understood.”
+And you need to create a story for yourself.
 
-Let me make sure I understand. In this Gold Anomaly Results table, we get the anomalies—resources with unusual activity. So my work is basically to check the cost in the aggregation table, compare the cost here, and identify whether what was detected is actually an anomaly. Is that correct?
+You: Okay, sure.
 
-And another thing: you can reduce the delta if you want. There is a delta configured here; at the top it is set to $50.
+Lead: Because I forgot to tell you earlier.
 
-“Yes.”
+Maybe put something like:
 
-“Okay, then I understood correctly.”
+“Verifying/validating seasonality of resources.”
 
-So basically, the aggregation table has the daily cost, right?
+Put something along those lines as the story and assign it to yourself.
 
-“Yes, daily cost.”
+You: Okay, sure.
 
-So we run this anomaly model using that table.
+You: So right now we have the full June and July data. For August, I'll do the complete backfill from the required date, then check and validate everything once, and then we'll add the email.
 
-“Yeah.”
+The date is the 17th, right?
 
-When this anomaly model runs, it runs for every resource, right?
+I'll backfill from around the 15th and make sure we have around two months / 60 days of data.
 
-The result for every resource should actually be present in this [Silver] table.
+Lead: Okay.
 
-“Yes.”
+You: Once the daily run happens, the remaining data should get backfilled.
 
-But I haven't created that for GCP yet.
+After that, I'll run this script again and check whether any anomalies are coming, validate them, and load the results.
 
-“Okay, okay.”
+You scheduled the anomaly process daily already, right?
 
-But for the Gold table, if the delta is more than $50, we insert that data. So that insertion process is already there.
+Lead: No, the anomaly process hasn't been scheduled yet.
 
-“Okay.”
+Once we validate it, on Wednesday or Thursday, we just need to put it on the schedule.
 
-So when you run this Python script, the data will be inserted directly into the DB.
+You: Okay, sure.
 
-“Okay.”
+Lead: So that shouldn't be much of a problem.
 
-What I want you to do is run that script for different days.
+And I was thinking about one more thing.
 
-“Okay, okay.”
+Check all the outputs. I think you have to save around four outputs/files, if I'm not wrong.
 
-I think the latest date I saw was the 26th. It hasn't been scheduled, right?
+You: Yeah.
 
-If you want, you can run it from your side and backfill the remaining days.
+Lead: The Excel should be saved, the HTML should be saved, the mail, and the Gold table / Silver table data should also be stored.
 
-“Okay.”
+You: Right now I think only around three outputs are getting saved.
 
-If it runs tomorrow, I know it will take the latest date, right?
+Lead: Yeah. Check once whether the Silver table data is also being stored.
 
-“Yes.”
+Actually, for Azure, because there are a lot of resources, I created a pipeline.
 
-So we won't get the remaining dates automatically. If you want, backfill them, or check it for the previous days.
+We store the data in Blob Storage, and then move it from Blob into the DB.
 
-“Okay, okay. Understood.”
+The Gold table is directly inserted from here.
 
-And another thing: in anomaly detection, if you have only 14 days of cost data, the model may not work for that resource because you need at least 30 days of data to know whether something is an anomaly condition.
+You: Okay, sure. I'll check.
 
-“Okay.”
+Lead: For the Silver one, if you're putting it into Blob, one thing you can do is, after the complete validation—or even before that, because it should work anyway—save it once locally.
 
-So that doesn't make it an anomaly [for the model]. That part won't work. I mean, I’m saying that a specific resource may not come as an anomaly.
+Check the table structure, create that table in your DB, and insert the data into it.
 
-“Oh, okay, yeah.”
+You: In the DB? Like Gold?
 
-Because it is a newly created resource. Since it has less historical data, it wasn't included/detected.
+Lead: Yeah, in the DB.
 
-So basically, to summarize your work: from the aggregation table, look at the costs. Or you can do it through reverse engineering—start from the anomaly result and check whether that specific resource is really an anomaly.
+Actually, one minute. Let's keep the order clear.
 
-“Okay, okay. Yeah, I understand the overall concept.”
+First thing: check seasonality.
 
-After validating those, then come from the aggregation side.
+Next: check whether the email is working properly.
 
-“Okay.”
+You: Okay.
 
-From aggregation, identify what we have not detected as anomalies but which are actually anomalies.
+Lead: For the email, check the entire email content.
 
-“Okay, okay.”
+The HTML will be added to it, and the Excel will also be attached/added to your email.
 
-You can write a simple query for that. For example, look at the last 30 days and identify where today's cost suddenly increased significantly.
+You: Okay, yeah.
 
-Just put a delta of maybe more than $50 or $25 compared with yesterday's cost.
+Lead: Just click/open everything and see whether it all looks good.
 
-A simple/default query will give you that.
+If something doesn't look good, note down what changes we need to make.
 
-“Yeah, yeah.”
+You: Okay, sure.
 
-Then you will automatically get a list of resources that could potentially be anomalies.
+Lead: After that, check the storage.
 
-“Okay.”
+In the actual code, the output is directly saved to storage.
 
-And from there, you can check why a resource was not detected.
+Check whether the Silver table output is also getting stored there.
 
-“Okay, understood.”
+You: Okay, sure.
 
-I’ll send you the script.
+Lead: For Azure, we already have the Silver table. For GCP, we need to create it.
 
-One thing: it will send the complete email. Just comment out the Send Mail function.
+You: Yeah, we need to create it for GCP. You mentioned that.
 
-“Okay.”
+Lead: Yeah.
 
-I think that should be fine. Everything else can remain.
+This script directly inserts into the Gold table.
 
-Basically, whatever is going into the Gold table will be inserted using the insert function.
+But actually, we should also keep/store the Silver results.
 
-“Okay.”
+You: Okay.
 
-Your minimum overspend is $50. Only when the anomaly/overspend is more than $50 will it be detected/inserted there.
+Lead: So if we need any proof or historical results later, we'll have that.
 
-“Okay, $50.”
+I think once that is done, that should basically be final.
 
-For example, suppose today's actual cost is much higher than the expected cost. If the difference is more than $50, that's the overspend.
+It should just be a direct upload/process after that. There shouldn't be much confusion. That's the major part.
 
-“Yes.”
+You: Okay, sure.
 
-Those records will be in this table. Anything less than $50 will not be there.
+You: I have one small doubt.
 
-“Okay, okay, yeah.”
+Actually, the last time I ran it, duplicate records were inserted.
 
-You can give whatever billing date you want.
+After that I changed the code and ran it again. I'll check it one more time.
 
-“Okay.”
+Lead: Yeah, yeah. Check that once.
 
-Once it is scheduled, basically it will work/process the last three days.
+You: That's my only concern.
 
-“Yeah.”
+I had run it multiple times while testing because there was an issue.
+
+During one run, there were something like 99 records, and another time around 18 records were inserted.
+
+So I truncated the table and inserted the data again.
+
+I'll check the code completely once more and make sure everything is correct.
+
+That's my only concern.
+
+Lead: Okay.
+
+You: Yeah, sure.
+
+You: Okay, thanks.
