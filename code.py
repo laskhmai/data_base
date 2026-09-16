@@ -1,1 +1,1 @@
-Are you asking to reference our module directly from your infra repo instead of using our standard sample-template/TFC workspace setup?”
+Hi Tracy, the user has a requirement, but the module isn’t available yet. Can they directly use the Terraform resource code from the provided link, or does our policy require them to raise a Service Enablement request with our team?
