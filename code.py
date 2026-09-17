@@ -1,39 +1,14 @@
-**Title:** Investigate SQL DPU SKU Recommendation and Savings Calculation Issue
+Before making any code or output changes, we need to perform a complete end-to-end analysis of the recommendation process.
 
-**Description:**
-The SQL DPU recommendation process completes successfully, and the action is displayed as **RightSize**. However, the recommended SKU and estimated savings are not generated. The same RightSize action also appears for all resources.
+Please select one affected resource and trace it through every stage:
 
-Before making code changes, we need to understand the complete process from the foundation level:
+1. Identify the original source/base tables and show the raw data used for that resource.
+2. Identify the silver/intermediate tables and explain every transformation, filter, join, and calculation applied to the data.
+3. Identify the gold/target table and show the final values written for Action, Recommended SKU, DTU recommendation, storage recommendation, and estimated savings.
+4. Compare the row counts and important column values at every stage to determine exactly where data is being removed, changed, or becoming null.
+5. Explain the business logic used to generate RightSize, Terminate, SKU recommendations, and savings.
+6. Confirm directly from the target table whether the recommended SKU and savings fields are actually blank or null.
+7. Identify the expected output schema and the values accepted by the downstream team. Do not introduce a new value such as “Insufficient Data” without confirming that it is allowed.
+8. Document the exact root cause and proposed correction only after completing this analysis.
 
-* Identify all base/source tables used by the process.
-* Understand the data available in each table.
-* Identify the columns used for CPU, storage, SKU, and savings calculations.
-* Trace the data flow from the source tables through the recommendation logic.
-* Review the intermediate data for at least one affected resource.
-* Understand how the final action, recommended SKU, and savings are calculated.
-* Identify missing, null, filtered, or incorrect data.
-* Document any flaws found in the data or existing logic.
-
-**Current Behavior:**
-
-* The process completes without an obvious failure.
-* The action defaults to RightSize.
-* Recommended SKU is blank or unavailable.
-* Estimated savings are blank or unavailable.
-* Multiple resources receive the same result.
-
-**Expected Behavior:**
-
-* Each eligible resource should receive an appropriate recommendation based on its utilization data.
-* The recommended SKU and estimated savings should be populated.
-* Resources should not receive the same default action unless supported by their data.
-
-**Acceptance Criteria:**
-
-1. All base tables and required columns are identified.
-2. The end-to-end data and recommendation flow is documented.
-3. Input and intermediate data are validated for one affected resource.
-4. The exact point where SKU or savings data becomes unavailable is identified.
-5. Any problematic filters, null values, or logical conditions are documented.
-6. Recommended code or data corrections are proposed only after completing the analysis.
-7. No production logic is changed as part of the initial investigation.
+For now, please do not modify the code or data. First provide the complete source-to-target data lineage, current business logic, findings, and supporting evidence.
