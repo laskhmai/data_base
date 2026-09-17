@@ -1,33 +1,3 @@
-SELECT
-    CONVERT(char(7), DateTimeEST, 120) AS MonthKey,
-    COUNT(*) AS TotalRows,
-    SUM(CASE WHEN StorageMax IS NULL THEN 1 ELSE 0 END) AS EmptyRows,
-    SUM(CASE WHEN StorageMax IS NOT NULL THEN 1 ELSE 0 END) AS PopulatedRows,
-    CAST(
-        100.0 * SUM(CASE WHEN StorageMax IS NULL THEN 1 ELSE 0 END)
-        / NULLIF(COUNT(*), 0)
-        AS DECIMAL(5,1)
-    ) AS PercentEmpty
-FROM [Metrics].[SqlDataBasesAggregatedHourly]
-GROUP BY CONVERT(char(7), DateTimeEST, 120)
-ORDER BY MonthKey;
+We want to test the original script without changing any production data. We will comment out all target-table writes and stored-procedure calls, run the remaining logic in read-only mode, and export the results to an Excel file for review.
 
-
-
-
-
-SELECT
-    CAST(DateTimeEST AS date) AS MetricDate,
-    COUNT(*) AS TotalRows,
-    SUM(CASE WHEN StorageMax IS NULL THEN 1 ELSE 0 END) AS EmptyRows,
-    SUM(CASE WHEN StorageMax IS NOT NULL THEN 1 ELSE 0 END) AS PopulatedRows,
-    CAST(
-        100.0 * SUM(CASE WHEN StorageMax IS NULL THEN 1 ELSE 0 END)
-        / NULLIF(COUNT(*), 0)
-        AS DECIMAL(5,1)
-    ) AS PercentEmpty
-FROM [Metrics].[SqlDataBasesAggregatedHourly]
-WHERE DateTimeEST >= '2026-07-01'
-  AND DateTimeEST <  '2026-09-01'
-GROUP BY CAST(DateTimeEST AS date)
-ORDER BY MetricDate;
+For now, do not change or run anything. Please explain what you understood and list what you plan to disable before we confirm that you can proceed.
