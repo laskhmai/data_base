@@ -1,1 +1,1 @@
-I debugged the issue. StorageMax is coming blank for all resources in August, so the recommendation is not getting calculated. Because of the existing fallback logic, the code is still marking them as RightSize. This issue was affecting only a few resources earlier, but this month almost all resources are falling into the same fallback condition.
+checked [Metrics].[SqlDataBasesAggregatedHourly], where StorageMax is blank from July 13 onward and completely blank for August. I have not yet checked any separate main storage table.
