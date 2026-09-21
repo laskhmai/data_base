@@ -1,1 +1,1 @@
-checked [Metrics].[SqlDataBasesAggregatedHourly], where StorageMax is blank from July 13 onward and completely blank for August. I have not yet checked any separate main storage table.
+Yes andi, I checked the main storage table [Metrics].[SQLDB_StorageMax_SM]. The StorageMax data stopped loading after July 12 around 6:56 AM UTC. Other storage and memory metrics also stopped at the same time, but CPU/DTU data is still coming. It looks like an upstream pipeline issue, so we need to check the Synapse pipeline history for the exact failure.
