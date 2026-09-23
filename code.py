@@ -1,1 +1,7 @@
-Hi, I have a requirement where the Windows VM needs to be provisioned with IIS installed, and an SSL certificate needs to be installed into the VM certificate store. I checked the current Windows VM module/custom script implementation, but I couldn't find where IIS or certificate installation is handled. Does the current module already support these two requirements through any existing variables/custom scripts? If not, would this require an enhancement to the module?
+We have a user requirement to disable public disk access and enable private disk access for their VMs.
+
+I noticed they are currently using a very old template version (13.0.4), while our newer template/module version 14.2 supports the required private disk access functionality.
+
+Since their repo is quite old, moving directly to 14.2 may require a significant migration and could introduce breaking changes.
+
+Do you have any suggestions on how we should approach this? Is upgrading to 14.2 mandatory to meet this requirement, or is there a supported way to enable private disk access/disable public disk access while keeping their existing template version?
