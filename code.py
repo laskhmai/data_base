@@ -1,13 +1,17 @@
-Please trace the complete data flow that creates the final recommendation table [Metrics].[SQLDbDTURecommendationEfficiencySavings].
+Hi Po, please follow these steps to provision the Azure Windows VM in your new repo:
 
-Start from all source tables, including raw metrics, inventory and SKU/pricing tables. Check the notebook queries, views, joins, filters, Python functions and stored procedures. For every stage, provide:
+Step 1: Use the provided Azure Windows VM sample template (version 3.0.7) and provision/copy the sample template into your new repo.
 
-Exact table/view/procedure name
-Input and output columns
-Join conditions and filters
-How DtuRec, StgRec, OverallWithinFamily, Action and savings are calculated
-Whether the final target table is populated directly by the notebook or through stored procedures
-A simple flowchart showing the complete source-to-target flow
-Compare one correct July record and one incorrect August record at every stage to show exactly where the recommendation becomes blank
+Step 2: You don't need to modify the other template files. Update the required VM values in local.tf based on your requirement, such as VM size, image, availability zone, computer name and other required configuration.
 
-Use only read-only checks. Do not execute any INSERT, UPDATE, DELETE, MERGE or data-changing stored procedure. Clearly separate confirmed findings from assumptions.
+Step 3: Make sure the appropriate TFC workspace is available/configured. The required secrets and credentials will be handled through the existing TFC/workflow setup, so don't add secrets directly into the code.
+
+Step 4: The repo already has separate workflow YAML files for Dev, NPE and Prod, with Plan and Apply workflows.
+
+Step 5: Based on where you want to provision the VM, trigger the appropriate Plan workflow. For example, for Dev, run the Dev Plan workflow; for NPE or Prod, select the respective workflow.
+
+Step 6: Once the Plan completes successfully, review the Terraform plan and confirm the expected VM/resources are showing.
+
+Step 7: Then trigger the corresponding Apply workflow for the same environment. This will provision the Azure Windows VM.
+
+If you have any questions or face any issues while provisioning, please ping me.
