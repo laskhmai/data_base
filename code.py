@@ -1,178 +1,101 @@
-I want to trace the Cloudability data flow using ONLY the access you currently have.
+Good. We now have the high-level SQL lineage.
 
-IMPORTANT:
-- Do NOT assume you have Azure Portal, Synapse workspace, Azure Storage, or pipeline access.
-- Do NOT ask for or attempt to obtain additional credentials.
-- Use only currently authorized resources such as SSMS/database access and accessible repositories/files.
-- READ ONLY.
-- Do NOT INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, execute production procedures, or trigger jobs/pipelines.
-- Do not modify any code.
+Do one more READ-ONLY investigation. Do not modify data, execute stored procedures, trigger jobs, or change code.
 
-BACKGROUND:
+I need exact evidence for the remaining SQL-side questions.
 
-We know Cloudability data is extracted into separate feeds:
-- Spend
-- Tags
-- Properties
-- Categories
+1. Show the COMPLETE relevant definition of:
 
-From local Python code we already know Spend, Tags and Properties are fetched from Cloudability APIs and CSV files are uploaded to Azure storage/staging locations.
+Cloudability.Daily_Spend_Aggregate
 
-Our final table of interest is:
+Focus especially on:
+- creation of #spend_recent_data_app_id
+- every selected column
+- all LEFT JOINs
+- WHERE conditions
+- CASE expressions for tags
+- INSERT INTO Cloudability.Daily_Spend
+- any DELETE/TRUNCATE logic before insertion
+- @StartDate handling
 
-Cloudability.Daily_Spend
+2. Show the COMPLETE relevant definitions of:
 
-For now, I want to work BACKWARDS from Daily_Spend using SSMS.
+Cloudability.usp_Spend_Collector_Insert
+Cloudability.usp_Spend_Staging_to_SQL
+Cloudability.usp_Properties_Collector_Upsert
+Cloudability.usp_Categories_Collector_Upsert
+Cloudability.usp_Tags_Collector_Upsert
 
-TASK 1 — Find Daily_Spend
+For each one report:
 
-Identify:
-- Database
-- Schema
-- Exact object name
-- Object type (table/view/etc.)
-- Columns
-- Primary keys/indexes if available
+SOURCE → TRANSFORMATION → DESTINATION
 
-TASK 2 — Find everything that references Daily_Spend
+Also identify whether it uses:
+INSERT / UPDATE / MERGE / DELETE.
 
-Search SQL Server metadata for:
-- Stored procedures
-- Views
-- Functions
-- Triggers
-- SQL objects
+3. Investigate these external tables:
 
-that reference:
-Cloudability.Daily_Spend
-or Daily_Spend.
+dbo.ExtTbl_Cloudability_Spend
+dbo.ExtTbl_Cloudability_Properties
+dbo.ExtTbl_Cloudability_Categories
+dbo.ExtTbl_Cloudability_Tags
 
-Show:
-Object name | Object type | Schema | Relevant SQL definition
+Using metadata only, report:
 
-TASK 3 — Determine what populates Daily_Spend
+External table
+→ external data source
+→ location/path
+→ file format
+→ columns
 
-Find whether Daily_Spend is populated by:
-- INSERT
-- INSERT SELECT
-- MERGE
-- stored procedure
-- another table
-- view
-- dynamic SQL
+Do not query external-table row contents if that requires storage access.
 
-If you find the object that populates it, inspect that object's definition.
+4. Investigate these staging tables:
 
-DO NOT EXECUTE the procedure.
+Staging.Spend
+Staging.Properties
+Staging.Categories
+Staging.Tags
 
-TASK 4 — Trace backwards recursively
+Report their columns and search ALL accessible SQL definitions for anything that INSERTs, MERGEs, UPDATEs, COPYs, or otherwise loads them.
 
-For every upstream table/view referenced by the process that populates Daily_Spend:
+If nothing in SQL populates them, explicitly say:
+"Loader is outside SQL metadata and must be traced in Synapse/ADF."
 
-1. Identify that object.
-2. Find what populates that object.
-3. Continue backwards.
+5. IMPORTANT — investigate the suspected tag18 issue.
 
-Pay particular attention to names containing:
+In Daily_Spend_Aggregate, show the COMPLETE CASE expression that creates:
 
-Cloudability
-Spend
-Daily_Spend
-Daily_Spend_Aggregate
-Tags
-Properties
-Categories
-Staging
-Stage
-Raw
+AWS_server_description(tag18)
 
-TASK 5 — Find Cloudability-related database objects
+We saw evidence suggesting the ELSE branch may reference t.tag5 instead of t.tag18.
 
-Search SSMS metadata and list ALL accessible database objects whose names or definitions contain:
+Do NOT call this a bug yet.
 
-Cloudability
-Spend
-Tags
-Properties
-Categories
+Give:
+Expected source
+Actual source from SQL
+Exact CASE expression
+Whether tag5 is referenced
+Whether tag18 is referenced
 
-Group them by:
-Tables
-Views
-Stored Procedures
-Functions
-Other objects
+Also search for the same logic in:
+Daily_Spend_App_ID_Aggregate_backfill
+and any other Daily_Spend aggregation procedure.
 
-TASK 6 — Investigate joins
+6. Finally create a Monday Synapse investigation checklist.
 
-When you find SQL combining Cloudability data, report:
+Based ONLY on gaps that SQL cannot answer, tell me exactly what pipeline/activity/object I need to find in Synapse to connect:
 
-- Left table
-- Right table
-- Join type
-- Join keys
-- Filters
-- Deduplication/grouping
-- Result/destination
+Python CSV upload
+→ ADLS
+→ External/Staging tables
+→ collector procedures
+→ Daily_Spend
 
-Specifically look for keys such as:
+Do not speculate about pipeline names.
 
-resource_identifier
-vendor_account_name
-date
-invoice_date
-
-TASK 7 — Column lineage
-
-For Cloudability.Daily_Spend, trace as many columns as possible back to their immediate source.
-
-Output:
-
-Daily_Spend column
-→ Source table
-→ Source column
-→ Transformation if any
-
-Do NOT guess if the source cannot be proven.
-
-TASK 8 — Identify the boundary of our current access
-
-Eventually we may reach a staging/raw/external table whose population happens outside SQL Server.
-
-When that happens, STOP the backward trace there and tell me:
-
-"This is the earliest point that can currently be proven from SSMS."
-
-Do not invent the Azure-side process.
-
-FINAL OUTPUT:
-
-Give me:
-
-1. Confirmed backward lineage diagram:
-
-Cloudability.Daily_Spend
-        ↑
-[procedure/transformation]
-        ↑
-[upstream table]
-        ↑
-[procedure/transformation]
-        ↑
-[earliest object visible from SSMS]
-
-2. Evidence table:
-
-Step | Object | Object Type | Reads From | Writes To | Evidence
-
-3. List of joins discovered.
-
-4. Column lineage discovered.
-
-5. Earliest point visible from SSMS.
-
-6. Missing pieces that require Azure/Synapse/Storage access.
-
-7. Exact SQL object names and relevant SQL snippets used as evidence.
-
-Do not make any changes. This is investigation only.
+Separate the final answer into:
+CONFIRMED
+NEEDS SYNAPSE
+POSSIBLE ISSUE TO VERIFY
