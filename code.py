@@ -1,101 +1,53 @@
-Good. We now have the high-level SQL lineage.
+I want you to create a README file in this repository that acts as the permanent context/documentation for our Cloudability → FOCUS POC.
 
-Do one more READ-ONLY investigation. Do not modify data, execute stored procedures, trigger jobs, or change code.
+First, inspect the complete repository and all relevant Cloudability code that you have access to.
 
-I need exact evidence for the remaining SQL-side questions.
+Document the current architecture from top to bottom, including:
+- Cloudability API
+- Python collectors for Spend, Properties, Categories and Tags
+- CSV generation
+- ADLS paths
+- External tables
+- Staging tables
+- Stored procedures
+- Cloudability Spend/Properties/Categories/Tags tables
+- Daily_Spend_Aggregate
+- Cloudability.Daily_Spend final table
 
-1. Show the COMPLETE relevant definition of:
+For every step, document the source → processing → destination and mention the actual file/script/table/procedure names you find.
 
-Cloudability.Daily_Spend_Aggregate
+Also include a section called "Unknown / To Be Verified" for anything we still cannot prove, especially:
+- What loads Staging.Spend, Staging.Properties, Staging.Categories and Staging.Tags
+- Synapse/ADF pipeline or job names
+- Triggers/schedules
+- External-table orchestration
+- Any other missing part of the end-to-end flow
 
-Focus especially on:
-- creation of #spend_recent_data_app_id
-- every selected column
-- all LEFT JOINs
-- WHERE conditions
-- CASE expressions for tags
-- INSERT INTO Cloudability.Daily_Spend
-- any DELETE/TRUNCATE logic before insertion
-- @StartDate handling
+Add another section called "FOCUS POC".
 
-2. Show the COMPLETE relevant definitions of:
+For now, explain only the known/proposed high-level direction:
+Azure Cost Management → FOCUS-format data → Storage → POC processing → comparison with Cloudability.Daily_Spend.
 
-Cloudability.usp_Spend_Collector_Insert
-Cloudability.usp_Spend_Staging_to_SQL
-Cloudability.usp_Properties_Collector_Upsert
-Cloudability.usp_Categories_Collector_Upsert
-Cloudability.usp_Tags_Collector_Upsert
+Do not invent FOCUS mappings until we receive and inspect the actual FOCUS dataset.
 
-For each one report:
+Also create a Mermaid architecture diagram showing the current confirmed Cloudability flow and the proposed FOCUS POC flow.
 
-SOURCE → TRANSFORMATION → DESTINATION
+IMPORTANT:
+This README should become the source of truth for this project.
+Whenever we discover something new in future sessions, update this same README.
+Before doing future Cloudability/FOCUS analysis, read this README first so we do not restart the investigation from the beginning.
 
-Also identify whether it uses:
-INSERT / UPDATE / MERGE / DELETE.
+Clearly label information as:
+- CONFIRMED
+- TO BE VERIFIED
+- PROPOSED
 
-3. Investigate these external tables:
+Use evidence from the actual code/database information available to you. Do not guess.
 
-dbo.ExtTbl_Cloudability_Spend
-dbo.ExtTbl_Cloudability_Properties
-dbo.ExtTbl_Cloudability_Categories
-dbo.ExtTbl_Cloudability_Tags
+Do not change any application code, SQL objects, pipelines, configuration, or production data. Documentation only.
 
-Using metadata only, report:
-
-External table
-→ external data source
-→ location/path
-→ file format
-→ columns
-
-Do not query external-table row contents if that requires storage access.
-
-4. Investigate these staging tables:
-
-Staging.Spend
-Staging.Properties
-Staging.Categories
-Staging.Tags
-
-Report their columns and search ALL accessible SQL definitions for anything that INSERTs, MERGEs, UPDATEs, COPYs, or otherwise loads them.
-
-If nothing in SQL populates them, explicitly say:
-"Loader is outside SQL metadata and must be traced in Synapse/ADF."
-
-5. IMPORTANT — investigate the suspected tag18 issue.
-
-In Daily_Spend_Aggregate, show the COMPLETE CASE expression that creates:
-
-AWS_server_description(tag18)
-
-We saw evidence suggesting the ELSE branch may reference t.tag5 instead of t.tag18.
-
-Do NOT call this a bug yet.
-
-Give:
-Expected source
-Actual source from SQL
-Exact CASE expression
-Whether tag5 is referenced
-Whether tag18 is referenced
-
-Also search for the same logic in:
-Daily_Spend_App_ID_Aggregate_backfill
-and any other Daily_Spend aggregation procedure.
-
-6. Finally create a Monday Synapse investigation checklist.
-
-Based ONLY on gaps that SQL cannot answer, tell me exactly what pipeline/activity/object I need to find in Synapse to connect:
-
-Python CSV upload
-→ ADLS
-→ External/Staging tables
-→ collector procedures
-→ Daily_Spend
-
-Do not speculate about pipeline names.
-
-Separate the final answer into:
-CONFIRMED
-NEEDS SYNAPSE
-POSSIBLE ISSUE TO VERIFY
+After creating the README, show me the file path and summarize:
+1. What you documented
+2. What is confirmed
+3. What is still unknown
+4. What we should investigate next
