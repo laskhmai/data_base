@@ -1,1 +1,8 @@
-what process actually populates the Staging.Spend, Staging.Properties, Staging.Categories, and Staging.Tags tables? Is it coming from ADLS through a Synapse pipeline, or is some Python/runbook loading them directly? Also, can you show me which pipeline triggers the related stored procedures?”
+SELECT 
+    COLUMN_NAME,
+    DATA_TYPE,
+    ORDINAL_POSITION
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'Cloudability'
+  AND TABLE_NAME = 'Daily_Spend'
+ORDER BY ORDINAL_POSITION;
