@@ -1,180 +1,242 @@
-Good. Your understanding of Inventory_dataDesign_1.md is now the TARGET design context.
+Yes, continue — but before doing deeper analysis, I want to correct and expand
+the discovery scope based on what I manually verified in SSMS.
 
-Before continuing, I want to correct the discovery approach.
+The previous discovery focused heavily on the AZURE schema. I have now confirmed
+that hybridasa_dedicatedpool contains many other potentially relevant schemas
+and tables.
 
-Do NOT assume that every object containing words such as Azure, resource, tag, cloud, cost, billing, etc. belongs to this migration.
+I can see areas including:
 
-Our immediate goal is NOT to inventory the entire SQL Server.
+- Analytics
+- ASTRA
+- Automation
+- AZURE
+- Cloudability
+- CostAtlas
+- dbo
+- Silver
+- SNOW
+- Staging
+- Metrics-related tables
+- Turbonomic/Turbonucs-related tables
+- and potentially other schemas not yet reviewed
 
-Our goal is to identify the CURRENT implementation that corresponds specifically to the Azure inventory domain described in Inventory_dataDesign_1.md.
+So DO NOT assume AZURE is the complete source for the Cloud 3.0 migration.
 
-Please proceed READ-ONLY only. No writes or database changes.
+Our goal is still the same:
 
-STEP 1:
-Run your targeted AZURE-schema discovery.
+Understand the CURRENT system accurately and compare it against the TARGET
+architecture defined in Inventory_dataDesign_1.md.
 
-Start specifically with the objects that appear to correspond to:
+TARGET DESIGN:
 
+Azure Resource Graph / ARM APIs
+        ↓
+Bronze - Databricks Delta raw ingestion
+        ↓
+Silver - Databricks Delta normalized data
+        ↓
+CDF - detect changed records
+        ↓
+Gold - current trusted state + bounded audit/history
+        ↓
+PostgreSQL - application/API serving layer
+
+Prefect will orchestrate the overall process.
+
+--------------------------------------------------
+PHASE 1 — COMPLETE CURRENT-STATE INVENTORY
+--------------------------------------------------
+
+First perform a READ-ONLY inventory of hybridasa_dedicatedpool.
+
+Get the complete list of schemas and tables.
+
+For each table collect metadata where safely available:
+
+- schema
+- table name
+- columns
+- data types
+- approximate/current row count
+- obvious primary/unique/business keys
+- obvious timestamp/load/audit columns
+- whether it appears active or historical/archive/staging
+
+Do NOT dump all table data.
+
+Use INFORMATION_SCHEMA, sys catalog views, metadata and safe SELECT queries.
+
+--------------------------------------------------
+PHASE 2 — FIND CLOUD 3.0 RELEVANT OBJECTS
+--------------------------------------------------
+
+From the complete inventory, identify objects related to:
+
+- Azure resource inventory
 - Resources
 - Subscriptions
 - Resource Groups
-- Resource Type
+- VMs
+- Disks
+- App Services
+- Metrics
+- Staging
+- Silver/normalized data
+- Gold/current-state data
+- Turbonomic
+- Cloudability
+- Recommendations
+- resource properties/tags
+- inventory history/archive
 
-Also identify closely related objects only when there is actual dependency evidence.
+Do not classify a table as relevant only because its name contains a keyword.
 
-STEP 2:
-For those objects, collect:
+Use actual schema/column/dependency evidence.
 
-- exact database.schema.object name
-- object type (table/view/etc.)
-- columns and data types
-- primary key
-- foreign keys
-- indexes
-- computed columns
-- approximate/exact row count where safe
-- sample 5 rows, but redact any sensitive information if present
+--------------------------------------------------
+PHASE 3 — TRACE CURRENT DATA FLOW
+--------------------------------------------------
 
-STEP 3:
-Trace how data gets INTO these current objects.
+For relevant objects, determine as much as possible:
 
-Search stored procedures, views, functions, SQL Agent jobs, Python/code repository references, pipelines, or other code that INSERTs, UPDATEs, MERGEs, or otherwise populates them.
-
-I specifically need to know:
-
-Azure/source
+SOURCE
    ↓
-collector/process
+COLLECTOR / LOADER / PROCEDURE / JOB
    ↓
-which current SQL object
+STAGING
    ↓
-which transformation/process
+TRANSFORMATION
    ↓
-next object
+CURRENT/FINAL TABLE
    ↓
-final consumer
+DOWNSTREAM CONSUMER
 
-Do not infer this only from table names.
-Show evidence from actual dependencies/code.
+Inspect metadata, views, stored procedures, functions and dependency information
+where available.
 
-STEP 4:
-Trace how data gets OUT of these objects.
+I specifically want to understand:
 
-Identify downstream:
-- stored procedures
-- views
-- applications/APIs
-- recommendation processes
-- other databases
-- jobs
+WHO WRITES → TABLE → WHO READS
 
-Again, only include relationships supported by evidence.
+Do NOT guess lineage based only on table names.
 
-STEP 5:
-Now compare ONLY these confirmed current Azure inventory objects with the target design in Inventory_dataDesign_1.md.
+If evidence proves something, mark:
+CONFIRMED
 
-Create a table:
+If evidence strongly suggests something but does not prove it, mark:
+INFERRED
 
-Current Object
-Current Purpose
-Current Key
-Current Upstream
-Current Downstream
-Target Bronze Object
-Target Silver Object
-Target Gold Object
-Target Postgres Object
-Confirmed / Inferred / Unknown
-Migration Concern
+If we cannot determine it, mark:
+UNKNOWN
 
-IMPORTANT:
+--------------------------------------------------
+PHASE 4 — COMPARE CURRENT SYSTEM TO TARGET DESIGN
+--------------------------------------------------
 
-Do not start migration.
-Do not generate implementation code.
+Compare the discovered CURRENT architecture with Inventory_dataDesign_1.md.
+
+Map, where evidence supports it:
+
+CURRENT                         TARGET
+------------------------------------------------
+Current raw ingestion      →    Bronze
+Current normalization      →    Silver
+Current change tracking    →    CDF
+Current final/current data →    Gold
+Current serving layer      →    PostgreSQL
+Current scheduling/jobs    →    Prefect
+
+Do NOT force a mapping.
+
+If the current system has no equivalent, say NONE FOUND.
+If unclear, say UNKNOWN.
+
+Also identify:
+
+1. What current functionality must be preserved.
+2. What functionality is intentionally changing.
+3. What old tables/processes may no longer be needed.
+4. What dependencies could break during migration.
+5. What questions still need confirmation from the team.
+
+--------------------------------------------------
+IMPORTANT EXECUTION RULE
+--------------------------------------------------
+
+Do this incrementally.
+
+Do NOT immediately deeply scan thousands of tables.
+
+First:
+1. Inventory schemas/tables.
+2. Narrow to relevant candidates.
+3. Show the candidate list and reasoning.
+4. Then continue deeper dependency/lineage analysis.
+
+You may continue automatically with safe read-only metadata discovery.
+For any expensive/full-table scan, destructive action, or uncertain operation,
+STOP and ask me first.
+
+--------------------------------------------------
+FILE MANAGEMENT RULE — IMPORTANT
+--------------------------------------------------
+
+Do NOT create a new .py file for every discovery step.
+
+Use ONE Python discovery script only:
+
+cloud3_migration_discovery.py
+
+Keep extending/refactoring that same script.
+
+Use ONE documentation file:
+
+cloud3_migration_discovery.md
+
+Use at most ONE reusable raw/log output file if necessary:
+
+cloud3_discovery_output.txt
+
+Do not create phase1.py, phase2.py, targeted.py, check.py, etc.
+
+If temporary files from previous discovery already exist, do not delete them
+without asking me first.
+
+--------------------------------------------------
+SAFETY
+--------------------------------------------------
+
+DATABASE ACCESS IS STRICTLY READ-ONLY.
+
+Allowed:
+SELECT
+INFORMATION_SCHEMA
+sys catalog views
+metadata/dependency inspection
+
+Not allowed:
+INSERT
+UPDATE
+DELETE
+MERGE
+DROP
+ALTER
+TRUNCATE
+CREATE database objects
+EXECUTE business procedures
+or anything that modifies production data/schema.
+
 Do not modify the database.
-Do not design missing architecture yourself.
 
-At this stage we are building an evidence-based CURRENT → TARGET map.
+Start now with the complete schema/table inventory and candidate identification.
+Then show me:
 
-Also, do not assume Prefect is currently implemented merely because it is part of our broader Cloud 3.0 discussion. Verify Prefect from repository/configuration evidence separately.
+A. What you discovered
+B. Which schemas/tables look relevant to Cloud 3.0
+C. Why each is relevant
+D. What is still UNKNOWN
+E. What you recommend inspecting next
 
-Save all confirmed findings into cloud3_migration_discovery.md.
-
-At the end, give me:
-
-1. What you CONFIRMED
-2. What you INFERRED
-3. What is still UNKNOWN
-4. Current architecture ASCII diagram
-5. Target architecture ASCII diagram
-6. Current → Target mapping
-7. The next 5 questions we need to answer before migration can begin
-
-If a query is slow or times out, stop that query and use metadata/estimated counts instead of stressing the database.
-
-
-
-IMPORTANT FILE MANAGEMENT RULE:
-
-Do NOT create a new .py file for every investigation step.
-
-I noticed you are currently creating multiple temporary Python files for individual steps/checks. I do not want this because it is cluttering my local workspace.
-
-From now on:
-
-1. Maintain ONE Python discovery script only:
-
-   cloud3_migration_discovery.py
-
-2. Put all database discovery/investigation logic into this single file.
-
-3. Organize the file using clearly named functions, for example:
-
-   check_connection()
-   discover_azure_schema()
-   discover_tables()
-   discover_columns()
-   discover_primary_keys()
-   discover_foreign_keys()
-   discover_indexes()
-   discover_row_counts()
-   discover_dependencies()
-   discover_stored_procedures()
-   trace_upstream()
-   trace_downstream()
-
-4. When we need another discovery step, UPDATE the existing
-   cloud3_migration_discovery.py file instead of creating another .py file.
-
-5. If some previous temporary discovery scripts were already created,
-   first list them for me.
-
-   DO NOT delete them automatically.
-
-   Tell me which files appear to be temporary/redundant and wait for my
-   approval before deleting anything.
-
-6. Keep the documentation/report separately in:
-
-   cloud3_migration_discovery.md
-
-So ideally this investigation should maintain only:
-
-   cloud3_migration_discovery.py   <-- all read-only discovery code
-   cloud3_migration_discovery.md   <-- findings/documentation
-
-7. Do NOT create additional .py, .sql, .txt, .json, or temporary files
-   unless there is a genuine technical requirement.
-
-8. If you believe another file is necessary, explain WHY and ask me
-   before creating it.
-
-9. Continue to enforce READ-ONLY database access in the Python script.
-   No INSERT, UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, TRUNCATE,
-   or other database-changing operations.
-
-10. Before executing each new discovery phase, modify/reuse the existing
-    cloud3_migration_discovery.py rather than generating a new script.
-
-Please confirm this file-management rule and then continue with the
-targeted Azure inventory discovery.
+Do not start migration implementation yet.
+We are still in DISCOVERY / CURRENT-STATE UNDERSTANDING.
