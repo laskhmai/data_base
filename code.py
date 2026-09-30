@@ -1,19 +1,20 @@
-Now perform the same data-availability validation on Cloudability.Daily_Spend, using read-only SELECT queries only.
-First confirm whether Cloudability.Daily_Spend contains data for the same Azure comparison window: 2025-06-26 through 2025-07-25.
-If the complete window is not available, report the exact overlapping date range between dbo.ActualCost_RR and Cloudability.Daily_Spend. Do not silently substitute another period.
-For the overlapping period, profile all 41 Cloudability.Daily_Spend columns and return:
-Cloudability column | total rows | non-null/non-empty rows | populated % | 3 redacted sample values
-Then add a second section containing only the candidate FOCUS-related fields from our structural matrix, showing:
-FOCUS field | Cloudability candidate column | populated % | sample values | current mapping classification
-Do not decide that a semantic mapping is confirmed merely because both columns contain data. This step is only data availability and overlap validation.
-Finally summarize:
-POPULATED (>=95%)
-PARTIALLY POPULATED (>0% and <95%)
-EMPTY (0%)
-Also report:
-- exact Cloudability date range
-- exact Azure/Cloudability overlapping date range
-- row count for that overlap
-- distinct vendor values in the overlap
-- distinct vendor_account_name count
-Strictly read-only: SELECT/metadata only. No INSERT, UPDATE, DELETE, MERGE, TRUNCATE, CREATE, DROP, ALTER, EXEC, stored procedures, files, pipelines, or configuration changes.
+Using read-only SELECT queries only, compare Azure dbo.ActualCost_RR against Azure-only rows from Cloudability.Daily_Spend for the exact overlap period 2025-06-26 through 2025-07-25.
+Do not create or modify anything.
+First normalize join keys:
+- ActualCost_RR.ResourceId is an ARM resource ID.
+- Cloudability.Daily_Spend.resource_id may be in <GUID>::<ARM ID> format. Extract only the ARM ID portion when present.
+- Normalize casing only if needed for comparison.
+Then produce:
+1. Daily aggregate comparison:
+   date | ActualCost_RR total Cost | Cloudability total amortized_spend | absolute difference | percentage difference
+2. Resource-level join statistics:
+   - total Azure ActualCost_RR distinct resource IDs
+   - total Cloudability Azure distinct parsed ARM resource IDs
+   - matched resource IDs
+   - unmatched on each side
+   - match percentage
+3. For 20 matched sample resources, show:
+   date | resource_id | ActualCost_RR ResourceName | Cloudability Azure_Resource_Name | ActualCost_RR Product/ConsumedService | Cloudability service_name | ActualCost_RR ResourceLocation/MeterRegion | Cloudability region | ActualCost_RR Quantity | Cloudability usage_quantity | ActualCost_RR Cost | Cloudability amortized_spend
+Redact sensitive identifiers where appropriate, but preserve enough structure to verify matching.
+Do not claim Cost = EffectiveCost or amortized_spend = EffectiveCost. Treat this as source-to-source comparison only.
+Finally summarize which fields appear structurally comparable and which fields still need semantic validation.
