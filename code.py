@@ -1,7 +1,10 @@
-Using read-only access only, create a complete structural mapping matrix with these three sides:
-FOCUS v1.2 standard field | Azure dbo.ActualCost_RR available column(s) | Cloudability.Daily_Spend available column(s).
-Include all relevant FOCUS v1.2 fields and inspect all 54 columns of ActualCost_RR and all 41 columns of Cloudability.Daily_Spend.
-For each row classify the relationship only as DIRECT / POSSIBLE / DERIVED / NOT AVAILABLE.
-Do not check whether the columns currently contain data yet. Do not perform value matching yet. Do not create or modify any tables/files/database objects. Use SELECT/metadata inspection only.
-Also add two sections at the bottom: Azure-only extra columns and Cloudability-only extra columns that do not have a direct FOCUS field.
-Do not assume semantic equivalence based only on similar column names. Clearly mark uncertain mappings as POSSIBLE.
+Using read-only SELECT queries only, validate data availability in dbo.ActualCost_RR for the FOCUS-related columns from the structural matrix.
+Use the latest 30 days actually available in the table, not today's last 30 days.
+For every candidate FOCUS field, return:
+FOCUS field | ActualCost_RR source column | total rows | non-null/non-empty rows | populated % | 3 redacted sample values | current classification
+Pay special attention to:
+BillingAccountId, BillingAccountName, SubscriptionId, SubscriptionName, Date, BillingPeriodStartDate, BillingPeriodEndDate, ResourceId, ResourceName, ConsumedService, Product, MeterName, ServiceFamily, MeterCategory, MeterSubCategory, ResourceLocation, MeterRegion, AvailabilityZone, Quantity, UnitOfMeasure, Cost, EffectivePrice, UnitPrice, MeterId, PartNumber, ChargeType, PricingModel, ReservationId, ReservationName, PublisherName, Tags.
+Do not create or modify anything. No INSERT, UPDATE, DELETE, MERGE, TRUNCATE, CREATE, DROP, ALTER, EXEC, stored procedures, files, or pipelines.
+Do not change semantic mappings yet. This step is only to determine whether each Azure candidate field actually has usable data.
+At the bottom give three groups:
+POPULATED, PARTIALLY POPULATED, EMPTY/NOT AVAILABLE.
