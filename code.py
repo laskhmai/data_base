@@ -1,5 +1,1 @@
-
-- name: Remove Tainted Site Extension From State
-  working-directory: ./
-  run: |
-    terraform state rm 'module.func-padm-splunk-integration.azurerm_resource_group_template_deployment.site-extensions[0]'
+just to clarify, are you looking to provision a new Windows App Service using our Terraform module, or is the Windows App Service already provisioned and you need help modifying your application pipeline to deploy code to it?
