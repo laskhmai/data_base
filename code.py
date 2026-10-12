@@ -1,1 +1,10 @@
-I am currently working on the Cloud 3.0 FOCUS POC as part of the Data Analytics team. I need read-only access to the Apptio Cloudability dashboards to review daily Azure cloud cost and spending data, compare it with FOCUS cost data, validate discrepancies, and support cost analysis and reporting. This access is required to complete my current project activities.
+Hi Nate,
+
+Users with the appropriate Terraform Cloud access can generate an API token from their Terraform Cloud profile.
+
+They can log in to Terraform Cloud, navigate to User Settings → Tokens, and generate a new API token.
+
+Once generated, the token can be configured securely in the pipeline to authenticate with Terraform Cloud and access the required modules.
+
+Thanks,
+Jayanth
