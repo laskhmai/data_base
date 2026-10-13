@@ -1,27 +1,24 @@
-I want to preserve the original Azure FOCUS Python notebook exactly as it is.
+Please update the local output file paths in my duplicate notebook `SUBS_Cost_mgmt_Focus_SQL_Test.ipynb`.
 
-Please follow these steps:
+The existing path `C:\Users\KAN2210\Desktop\Focus` belongs to my colleague, not me.
 
-1. Locate the original notebook `SUBS_Cost_mgmt_Focus_runbook.ipynb`.
-2. Create a duplicate copy in the same folder named `SUBS_Cost_mgmt_Focus_SQL_Test.ipynb`.
-3. Do not modify, rename, delete, or overwrite the original notebook.
-4. In the duplicate notebook only, prepare a separate SQL-compatible CSV output for the existing `Staging.Cost_focus` table.
-5. Keep the existing 16-column FOCUS CSV output unchanged.
-6. For the SQL-compatible CSV:
-   - Rename `ConsumedService` to `ServiceName`.
-   - Rename `ConsumedRegion` to `RegionName`.
-   - Exclude `ResourceGroup` and `ProviderName`.
-   - Match all 14 SQL table columns in their exact order.
-7. Validate the date format, decimal precision, and ActualCost/AmortizedCost merge logic. Do not assume that matching column names guarantee correct FOCUS cost semantics.
-8. Add validation checks for missing columns, duplicate rows, null values, and cost totals.
-9. Save the SQL-compatible CSV with a different filename so it cannot overwrite the original output.
+Please make the following changes:
 
-**Restrictions:**
-- Do not modify the original notebook.
-- Do not modify SQL table structures or records.
-- Do not execute any API requests or database writes.
-- Do not expose or copy plaintext secrets into new code. Replace any hardcoded credentials in the duplicate with references to approved secure configuration.
-- Only modify the duplicate notebook.
-- After completing the changes, show the differences between the original and duplicate notebooks and explain them.
+1. Automatically detect my current Windows user profile using Python's `Path.home()`.
+2. Create a `Focus` folder under my user profile if it doesn't already exist.
+3. Update both `OUTPUT_FILE` and `SQL_OUTPUT_FILE` to save CSV files inside my local `Focus` folder.
+4. Use separate filenames for the original 16-column CSV and SQL-compatible 14-column CSV.
+5. Check the `CERT_PATH` and tell me whether it points to my colleague's folder. Do not change it without confirming the correct certificate location.
+6. Keep the subscription configuration and all existing data processing logic unchanged.
 
-I want to review the duplicate code before running it.
+**Important restrictions:**
+- Modify only the duplicate notebook.
+- Do not touch the original notebook.
+- Do not modify or load anything into SQL Server.
+- Do not upload anything to Azure Blob Storage.
+- Do not execute the notebook or call Azure APIs.
+- Do not display credentials or secrets.
+
+After making the changes, show me the final local output paths and confirm both CSV files will be saved on my laptop.
+
+Wait for my approval before running the notebook.
