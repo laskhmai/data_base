@@ -1,29 +1,27 @@
-I am working on the Azure FOCUS cost data pipeline.
+I want to preserve the original Azure FOCUS Python notebook exactly as it is.
 
-**Python file:** `SUBS_Cost_mgmt_Focus_runbook.py`  
-**SQL target table:** `Staging.Cost_Focus`
+Please follow these steps:
 
-Please perform the following analysis:
+1. Locate the original notebook `SUBS_Cost_mgmt_Focus_runbook.ipynb`.
+2. Create a duplicate copy in the same folder named `SUBS_Cost_mgmt_Focus_SQL_Test.ipynb`.
+3. Do not modify, rename, delete, or overwrite the original notebook.
+4. In the duplicate notebook only, prepare a separate SQL-compatible CSV output for the existing `Staging.Cost_focus` table.
+5. Keep the existing 16-column FOCUS CSV output unchanged.
+6. For the SQL-compatible CSV:
+   - Rename `ConsumedService` to `ServiceName`.
+   - Rename `ConsumedRegion` to `RegionName`.
+   - Exclude `ResourceGroup` and `ProviderName`.
+   - Match all 14 SQL table columns in their exact order.
+7. Validate the date format, decimal precision, and ActualCost/AmortizedCost merge logic. Do not assume that matching column names guarantee correct FOCUS cost semantics.
+8. Add validation checks for missing columns, duplicate rows, null values, and cost totals.
+9. Save the SQL-compatible CSV with a different filename so it cannot overwrite the original output.
 
-1. Read the Python file and identify all columns generated in the final CSV output.
-2. Connect to the existing authorized SQL Server database and retrieve the complete schema of `Staging.Cost_Focus`, including column names, data types, and column order.
-3. Compare the CSV columns against the SQL table columns.
-4. Provide a comparison table with:
-   - CSV Column Name
-   - SQL Table Column Name
-   - Match Status
-   - Required Change
-5. Identify missing columns, extra columns, naming differences, and potential data type mismatches.
-6. Check whether the Python script needs column renaming or additional transformations before loading the CSV into the table.
-7. Recommend the exact Python code changes required to generate a CSV compatible with `Staging.Cost_Focus`.
+**Restrictions:**
+- Do not modify the original notebook.
+- Do not modify SQL table structures or records.
+- Do not execute any API requests or database writes.
+- Do not expose or copy plaintext secrets into new code. Replace any hardcoded credentials in the duplicate with references to approved secure configuration.
+- Only modify the duplicate notebook.
+- After completing the changes, show the differences between the original and duplicate notebooks and explain them.
 
-**Important instructions:**
-- Read-only investigation only.
-- Do not execute the Python script or call external APIs.
-- Do not modify Python files or SQL objects.
-- Do not insert, update, or delete any database records.
-- Do not display credentials or tokens.
-- Do not assume that similarly named fields have identical meanings.
-- If the SQL table cannot be located, report the connection/database limitation instead of guessing.
-
-**Expected output:** A complete CSV-to-SQL column mapping table, identified mismatches, and proposed code changes for my review.
+I want to review the duplicate code before running it.
