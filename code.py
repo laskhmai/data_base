@@ -1,1 +1,1 @@
-Install the truststore package in my existing work_env virtual environment using the already configured company-approved Artifactory package source. Use C:\venvs\work_env\Scripts\python.exe. After installation, verify that import truststore works in the same environment. Do not change the original notebook, disable SSL verification, execute Azure APIs, or modify SQL/Blob data.
+https://cloud.mongodb.com/api/atlas/v2/orgs/{{orgId}}/invoices/{{invoiceId}}/reports/{{reportId}}
