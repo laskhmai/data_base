@@ -1,17 +1,9 @@
-Continue the MongoDB September 2026 Native FOCUS vs Regular Invoice reconciliation using the two existing local CSV files.
+Hi bro, I did some analysis on MongoDB September billing data by comparing the **FOCUS API and Direct Invoice API**. I downloaded both CSV files through Postman and compared the columns, usage costs and credits.
 
-STRICT RULES: Read-only. Do not create or modify files, Excel sheets, scripts, or reports. No API calls, database access, uploads, or secrets. Print all results in terminal/chat.
+On the FOCUS API side, we are getting 49 columns, and around 10 columns are directly matching with our 14 FOCUS staging table columns. For September, we got around 4,081 usage records in both APIs, and they matched.
 
-1. Explain with exact evidence why the latest full-month figures are FOCUS ListCost $6,339.81, BilledCost/EffectiveCost $4,438.56, invoice gross $6,340.80, and credits -$6,340.80, while our earlier September usage-date-filtered figures were FOCUS ListCost $6,313.48337, BilledCost $4,420.143, invoice gross $6,314.49, and credits -$6,340.80. Show which date filters, records, and billing period rules produce each total. Do not assume they use the same scope.
+Coming to cost, in the full export, Direct Invoice API shows 6,340.80, whereas FOCUS BilledCost is $4,438.56. We identified a 0.7 pricing conversion rate, so 6,340.80 × 0.7 = $4,438.56. Also, Direct Invoice API has 420 negative credit records totaling -6,340.80, linked to the Atlas Flex Commit contract reference.
 
-2. Inspect the 420 invoice credit rows. Group by exact SKU, Description, Note, project and date. Identify any evidence of Atlas Flex Commit drawdown, prepaid commitment, promotional credit or billing adjustment. Distinguish facts from inferences.
+We also checked daily cost availability using the FOCUS API. I downloaded the October report through Postman, and we are getting daily usage data up to October 14. For October 14, the BilledCost is around $81.17 across 80 records.
 
-3. Independently verify the claimed 0.7 Atlas Credits-to-USD conversion factor using values and units in the local files. Show calculations at total, project, day and SKU level. If the factor is not explicitly documented in the files, label it observed/inferred rather than confirmed policy.
-
-4. Verify whether the $1,901.25 FOCUS ListCost-to-BilledCost reduction is contract pricing and whether the $6,340.80 invoice credits are a separate settlement mechanism. Do not claim contractual proof without contract or invoice documentation.
-
-5. Show a short final table: Question, Evidence, Verdict (VERIFIED / INFERRED / NOT VERIFIED), Remaining requirement.
-
-6. Explain in simple English what cost we should use for daily cost reporting and what data we need for final invoice reconciliation. Do not treat the invoice CSV net of $0.00 as the final payable bill without independent invoice-total evidence.
-
-Print everything directly in the terminal. Do not create any files.
+So I think we can use the **FOCUS API for daily cost reporting** and the **Direct Invoice API for credit and invoice comparison**. Next, we need to finalize the remaining column mappings and validate the daily refresh.
