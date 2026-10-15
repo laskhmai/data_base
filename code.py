@@ -1,19 +1,20 @@
-Continue our MongoDB FOCUS POC using the existing September 2026 files and comparison script.
+Continue the MongoDB FOCUS POC using the existing September 2026 Native FOCUS CSV, Regular Invoice CSV, MongoDB_FOCUS_Comparison.xlsx, and Comparison_Summary.md.
 
-We found an unexplained $1,894.35 difference between Native FOCUS BilledCost ($4,420.14) and regular invoice Amount excluding credit rows ($6,314.49).
+The cost reconciliation is complete. Our next task is to identify which columns are important for Cloud 3.0 and which columns can be excluded.
 
-**Your next task is to investigate this difference using a read-only, local analysis.**
+**Tasks:**
 
-1. Compare Native FOCUS and regular invoice rows using the same organization, usage dates, SKU, project/account, region, and any other reliable matching fields.
-2. Identify which invoice charges are missing from FOCUS or have different amounts.
-3. Check whether differences come from discounts, units, pricing, currency, date handling, or other billing categories.
-4. Verify whether the 420 credit rows were correctly excluded for the usage-only comparison.
-5. Show daily and SKU-level differences, including the largest contributors to the $1,894.35 gap.
-6. Do not assume that similarly named fields have identical billing meanings.
-7. Do not invent explanations for unmatched charges.
-8. Update the existing comparison Excel file with a new sheet called `Cost_Reconciliation`.
-9. Update `Comparison_Summary.md` with confirmed findings and remaining unresolved differences.
+1. Review all 49 Native FOCUS columns and all 40 Regular Invoice columns.
+2. For each column, identify its purpose, whether it contains useful data, and whether it duplicates another field.
+3. Classify each column as KEEP, OPTIONAL, REMOVE, or NEEDS VALIDATION.
+4. Prioritize daily cost reporting, resource identification, organization/project identification, service, SKU/meter, region, usage, discounts, tags, and billing accuracy.
+5. Compare the recommended fields against the existing Azure FOCUS staging schema (`Staging.Cost_focus`) and its 14 columns.
+6. Identify fields missing from MongoDB Native FOCUS and fields MongoDB provides that could add value beyond the Azure schema.
+7. Do not assume similar field names mean the same thing. Explain any mapping uncertainty.
+8. Recommend a minimal set of columns for our MongoDB POC and explain why each is needed.
+9. Add a new sheet named `Final_Column_Selection` to the existing comparison Excel workbook.
+10. Update `Comparison_Summary.md` with the column recommendations and remaining open questions.
 
-Keep all original files unchanged. Do not call APIs, connect to databases, upload data, or modify production code. Do not expose sensitive organization or project identifiers in the summary.
+Use only local files. Keep original CSVs unchanged. No APIs, database connections, production changes, or uploads. Do not expose sensitive organization or project identifiers.
 
-Run the analysis locally and give me a simple explanation of the results.
+Explain the findings in simple English, including a final recommendation for our Cloud 3.0 MongoDB approach.
