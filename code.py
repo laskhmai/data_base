@@ -1,23 +1,16 @@
-We are working on MongoDB billing data integration for our Cloud 3.0 project. Currently, we are exploring two APIs: FOCUS API and Direct Invoice API, to understand what information each provides and which one is suitable for our cost pipeline.
-What we are doing with the FOCUS API
-The FOCUS API provides standardized MongoDB cost and usage data. It includes organization and project information, service names, SKU details, regions, usage dates, usage quantities, unit pricing information, list cost, billed cost, and effective cost.
+Review our existing MongoDB FOCUS API and Direct Invoice API comparison and the proposed single-table design.
 
-We are using the FOCUS API to understand daily usage and how much each service or resource costs. We are also mapping the available fields into our staging table so that MongoDB billing data can follow the same structure as other cloud cost data.
+Our requirement is to maintain one MongoDB cost dataset that includes daily usage charges, discounts, credits, and invoice reconciliation information.
 
-However, the FOCUS report does not clearly provide separate invoice-level credit transactions or the final outstanding invoice balance. Also, some resource-level fields may not be available in the report.
-What we are doing with the Direct Invoice API
-The Direct Invoice API provides MongoDB's billing and invoice information. It includes invoice details, usage line items, service and SKU information, regions, quantities, unit pricing, charges, and credit or adjustment information.
+Before modifying any code or SQL tables:
 
-We are using this API to understand how MongoDB calculates invoice charges, what credits are applied, and how those adjustments affect the invoice balance.
+1. Identify which FOCUS cost field exactly matches the Direct Invoice usage amount, including currency and units.
+2. Determine whether FOCUS BilledCost/EffectiveCost already includes the discounts represented by Direct Invoice credit rows.
+3. Separate SKU-level discount credits from invoice-level credits and other adjustments.
+4. Identify the correct cost field and sign for each row type in a unified dataset.
+5. Confirm how to avoid double-counting usage charges or discounts.
+6. Identify the appropriate organization, project, invoice, date, and SKU identifiers for each row type.
+7. Propose a unified FOCUS-based schema that preserves all required billing and resource details.
+8. Demonstrate reconciliation from the unified dataset to the actual invoice totals using our existing CSV data.
 
-Unlike FOCUS, the Direct Invoice API is more focused on billing reconciliation rather than providing a standardized cloud cost dataset.
-What we are trying to identify
-Our main objective is to compare both APIs and understand:
-- Whether both APIs contain the same underlying usage records.
-- Whether service names, SKUs, regions, quantities, and unit prices match.
-- How FOCUS calculates billed and effective costs.
-- How the Direct Invoice API represents discounts and credits.
-- Whether any fields or usage records are missing from either API.
-- Which API is more suitable for daily cost ingestion and which is needed for invoice reconciliation.
-Our next step
-We are fetching data from both APIs for the same organizations and billing periods, then comparing the records at the service, SKU, region, and usage-date level.
+Do not modify the database or existing Python scripts yet. Provide the proposed schema, mapping rules, reconciliation evidence, and any unresolved issues first.
