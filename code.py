@@ -1,70 +1,42 @@
-I want to confirm which MongoDB FOCUS cost field we should use in our unified billing table. Please validate this using actual FOCUS and Direct Invoice CSV data, not assumptions.
+terraform state rm 'data.vault_generic_secret.sdm_auth'
+terraform state rm 'module.sdm-vault-auth.data.http.jwt'
+terraform state rm 'module.sdm-vault-auth.data.http.token'
 
-**Step 1 — Select one organization and one completed invoice month**
+terraform state rm 'module.windowsvm["windowsvm-adf-bal-bp-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-bal-bp-perf"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-bal-bp-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-bal-bp-uat"].sdm_resource.this[0]'
 
-Use the same organization and billing period from both API results. Read the existing Python scripts and available CSV files.
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-bp-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-bp-perf"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-bp-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-bp-uat"].sdm_resource.this[0]'
 
-**Step 2 — Compare matching usage records**
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-dm-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-dm-perf"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-dm-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-claims-dm-uat"].sdm_resource.this[0]'
 
-Match FOCUS and Direct Invoice usage records using available identifiers such as:
-- Organization ID and Invoice ID
-- Project / SubAccountId
-- ChargePeriodStart / usage date
-- SKU / SkuMeter
-- Region
-- Usage quantity
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-bp-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-bp-perf"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-bp-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-bp-uat"].sdm_resource.this[0]'
 
-If the records have different granularity, aggregate them to a common level before comparing. Identify any unmatched records.
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-dm-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-dm-perf"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-dm-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-cp-dm-uat"].sdm_resource.this[0]'
 
-**Step 3 — Validate the cost fields**
+terraform state rm 'module.windowsvm["windowsvm-adf-dm-uat1"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-dm-uatv2"].sdm_resource.this[0]'
 
-Compare:
-1. FOCUS `PricingCurrencyEffectiveCost` against Direct Invoice usage `Amount`.
-2. FOCUS `BilledCost` against Direct Invoice usage `Amount`.
-3. FOCUS `EffectiveCost` against Direct Invoice usage `Amount`.
-4. FOCUS `ListCost` against Direct Invoice usage `Amount`.
+terraform state rm 'module.windowsvm["windowsvm-adf-dp-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-dp-sit"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-dp-uat1"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-dp-uatv2"].sdm_resource.this[0]'
 
-Show which field matches, the differences, and the currency and units used.
+terraform state rm 'module.windowsvm["windowsvm-adf-legacy-joborchestrator-dev"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-adf-legacy-joborchestrator-uat"].sdm_resource.this[0]'
 
-**Step 4 — Validate discounts and credits**
-
-Inspect the actual Direct Invoice credit rows.
-
-Determine whether those credits represent discounts already included in FOCUS `BilledCost` / `EffectiveCost`, or additional adjustments.
-
-Do not assume every credit is a committed-spend discount. Identify credit types using actual source fields.
-
-**Step 5 — Reconcile invoice totals**
-
-Calculate and compare:
-- Total FOCUS `PricingCurrencyEffectiveCost`
-- Total FOCUS `BilledCost`
-- Total FOCUS `EffectiveCost`
-- Total Direct Invoice usage `Amount`
-- Total Direct Invoice credits
-- Direct Invoice net billed amount
-
-Verify whether:
-
-`FOCUS PricingCurrencyEffectiveCost + Invoice Credits = Invoice Net Billed Amount`
-
-Also check whether:
-
-`FOCUS BilledCost = Invoice Net Billed Amount`
-
-Explain any differences and avoid double-counting discounts.
-
-**Step 6 — Final recommendation**
-
-Tell me:
-- Which field should represent usage charges in our unified table?
-- Which field should represent post-discount daily cost?
-- Which invoice credit rows should be added separately?
-- How can we prevent double-counting?
-- What is the exact mapping for our unified MongoDB staging table?
-
-Show actual evidence with a few matching usage records and invoice-level reconciliation totals.
-
-Clearly distinguish confirmed findings from assumptions or unresolved gaps.
-
-**IMPORTANT: This is read-only analysis. Do not modify Python scripts, SQL tables, or database records. Do not print API keys, passwords, or connection strings.**
+terraform state rm 'module.windowsvm["windowsvm-npe"].sdm_resource.this[0]'
+terraform state rm 'module.windowsvm["windowsvm-sit"].sdm_resource.this[0]'
