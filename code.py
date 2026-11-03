@@ -1,1 +1,1 @@
-, I checked the backend module, and it currently supports networking configuration for data disks only. There is no networking configuration for the OS disk. Please reach out to the CP team or Service Enablement team to add the required OS disk networking support to the module.
+I checked with Nate. To his knowledge, there is no way to change the OS disk networking setting through Terraform. He suggested that a direct Azure API call might be an option, but this would need to be tested, as he is unsure whether it would work.
