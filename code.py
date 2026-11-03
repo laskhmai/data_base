@@ -1,3 +1,1 @@
-Open Virtual machines → one affected VM → Settings → Extensions + applications.
-Select CustomScriptExtension.
-Check status and detailed message for an error
+, I checked the backend module, and it currently supports networking configuration for data disks only. There is no networking configuration for the OS disk. Please reach out to the CP team or Service Enablement team to add the required OS disk networking support to the module.
