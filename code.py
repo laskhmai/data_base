@@ -1,11 +1,35 @@
-In `FreeSku_Information_Updated_Final.xlsx`, some Environment values are showing `needs update`.
+Please update my final Free SKU Excel report according to Neeraja's latest requirement.
 
-Please investigate those resources using their normalized Resource IDs and check the `environment` column in `[Gold].[AzureActiveResourceOwnerShipNormalized]`, with other authorized Azure inventory tables as fallback.
+She specifically wants only Free-tier SKUs (F0/F1) across Production, QA, and Stage environments.
 
-Fill the Environment with the actual verified value, such as DEV, QA, NPE, or PROD. Also check reliable environment tags where available.
+1. Read the latest Free SKU workbook, including the FreeSku_Information and Unverified_SKU sheets where applicable.
 
-Do not guess based only on the resource name or account name. Do not overwrite existing valid Environment values.
+2. Filter resources to include only:
+   - SKU Name = F0 or F1
+   - Environment = PROD, Production, QA, or Stage, including verified equivalent environment values.
 
-If the environment cannot be verified, leave it blank and list those resources in `Validation_Detail`.
+3. For missing or `needs update` Environment values, use normalized Resource ID matching against `[Gold].[AzureActiveResourceOwnerShipNormalized]` and other authorized inventory sources to retrieve the correct environment.
 
-Preserve the existing 11-column format and all resource records. Save the corrected workbook as a new file and provide the number of Environment values updated.
+4. Do not assume NPE, DEV, or sandbox means QA or Stage. Only include resources with a verified environment classification.
+
+5. Do not classify a paid SKU as F0/F1 merely because Aptio Item Description contains a Free Plan description. Use the SQL SKU validation results.
+
+6. Keep the exact 11-column structure and formatting of the team's original FreeSku_Information Excel.
+
+7. Create separate sheets:
+   - `Prod`
+   - `QA-Stage`
+   - `Summary`
+
+8. Do not modify the original files. Create `FreeSku_F0_F1_Prod_QA_Stage.xlsx`.
+
+9. In Summary, provide:
+   - Total F0/F1 resources
+   - Production count
+   - QA count
+   - Stage count
+   - Excluded resource counts by reason
+
+10. Preserve a separate audit of excluded and uncertain records so no source data is lost.
+
+Please report the final unique resource count after filtering. Do not invent or force a count.
