@@ -1,33 +1,13 @@
-# Task: Create Final Azure Free SKU Excel Report in Team's Required Format
+For the final Free SKU report, use the actual verified SKU from SQL wherever available.
 
-## Objective
+For App Service resources:
+- Include confirmed Free/F1 resources in the main Free SKU report.
+- If SQL confirms a paid SKU, exclude that resource from the main Free SKU report and place it in a separate `Paid_SKU_Review` worksheet.
+- If SQL cannot confirm the SKU, place the resource in `Unverified_SKU` with its original Aptio F1 description.
+- Do not automatically assign F1 to every Aptio App Service record.
 
-We have already completed the Azure Free SKU discovery and SQL ownership enrichment.
+Preserve all 2,781 Aptio records and 129 additional SQL candidates across the main report and review worksheets, without losing or duplicating resources.
 
-Now I want you to create **one final Excel workbook** by combining the existing Aptio resources and the additional SQL resources, following the exact structure of the `FreeSku_Information` sample workbook shared by my team.
+Use the team's exact 11-column format for the final Free SKU worksheets.
 
-This is primarily an Excel restructuring, SKU mapping, and consolidation task.
-
-## 1. Input files
-
-Use these files:
-
-**File 1 — Existing Aptio resources**
-
-`FreeSku_Information_Updated.xlsx`
-
-Contains 2,781 resources, including ownership information enriched from SQL.
-
-**File 2 — Additional SQL resources**
-
-`SQL_Additional_129_FreeSKU_Review.xlsx`
-
-Contains 129 additional Free SKU candidates identified in Hybrid Synapse.
-
-**File 3 — Team's sample format**
-
-`FreeSku_Information` (original team workbook)
-
-Use this only as the formatting and structure reference.
-
-Locate the actual files in
+Do not overwrite the original Excel files. Produce the final workbook with a summary of confirmed Free, paid, and unverified resource counts.
