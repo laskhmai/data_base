@@ -1,35 +1,14 @@
-Please update my final Free SKU Excel report according to Neeraja's latest requirement.
+In `FreeSku_F0_F1_Prod_QA_Stage.xlsx`, some resources have `AccountName = orphaned`.
 
-She specifically wants only Free-tier SKUs (F0/F1) across Production, QA, and Stage environments.
+Please investigate these using their full normalized Resource IDs.
 
-1. Read the latest Free SKU workbook, including the FreeSku_Information and Unverified_SKU sheets where applicable.
+1. Extract the Subscription ID from each Resource ID.
+2. Check available SQL subscription/account mapping tables and existing Aptio account data.
+3. Identify the actual AccountName for each subscription.
+4. Update only `orphaned` values when a reliable mapping is found.
+5. If no mapping exists, preserve `orphaned` and list the resources separately for review.
+6. Do not guess the AccountName from the resource name or group name.
+7. Keep the existing 11-column format, F0/F1 filters, and all resource records.
+8. Save the corrected report as a new Excel file.
 
-2. Filter resources to include only:
-   - SKU Name = F0 or F1
-   - Environment = PROD, Production, QA, or Stage, including verified equivalent environment values.
-
-3. For missing or `needs update` Environment values, use normalized Resource ID matching against `[Gold].[AzureActiveResourceOwnerShipNormalized]` and other authorized inventory sources to retrieve the correct environment.
-
-4. Do not assume NPE, DEV, or sandbox means QA or Stage. Only include resources with a verified environment classification.
-
-5. Do not classify a paid SKU as F0/F1 merely because Aptio Item Description contains a Free Plan description. Use the SQL SKU validation results.
-
-6. Keep the exact 11-column structure and formatting of the team's original FreeSku_Information Excel.
-
-7. Create separate sheets:
-   - `Prod`
-   - `QA-Stage`
-   - `Summary`
-
-8. Do not modify the original files. Create `FreeSku_F0_F1_Prod_QA_Stage.xlsx`.
-
-9. In Summary, provide:
-   - Total F0/F1 resources
-   - Production count
-   - QA count
-   - Stage count
-   - Excluded resource counts by reason
-
-10. Preserve a separate audit of excluded and uncertain records so no source data is lost.
-
-Please report the final unique resource count after filtering. Do not invent or force a count.
+Please report how many `orphaned` account names were resolved and which source table provided each mapping.
