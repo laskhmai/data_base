@@ -1,14 +1,24 @@
-In `FreeSku_F0_F1_Prod_QA_Stage.xlsx`, some resources have `AccountName = orphaned`.
+Please correct the Free SKU filtering logic.
 
-Please investigate these using their full normalized Resource IDs.
+We need to include all three SKU values:
+- F0
+- F1
+- Free
 
-1. Extract the Subscription ID from each Resource ID.
-2. Check available SQL subscription/account mapping tables and existing Aptio account data.
-3. Identify the actual AccountName for each subscription.
-4. Update only `orphaned` values when a reliable mapping is found.
-5. If no mapping exists, preserve `orphaned` and list the resources separately for review.
-6. Do not guess the AccountName from the resource name or group name.
-7. Keep the existing 11-column format, F0/F1 filters, and all resource records.
-8. Save the corrected report as a new Excel file.
+Environments must be Production, QA, or Stage only.
 
-Please report how many `orphaned` account names were resolved and which source table provided each mapping.
+I manually filtered the combined Excel and found approximately 48 resources.
+
+Please:
+
+1. Recheck the combined Excel using `sku_name` values F0, F1, and Free.
+2. Filter Environment to PROD, Production, QA, Stage, or Staging.
+3. Compare the results with your previous 18-resource report.
+4. Identify why the remaining resources were excluded.
+5. Check the SQL SKU information, but do not automatically exclude a resource simply because its valid SKU name is `Free` rather than F0/F1.
+6. Keep actual paid SKUs excluded.
+7. Preserve any source-supported Free SKU values and identify conflicts separately.
+8. Create a corrected Excel report in the team's original 11-column format.
+9. Provide the final counts separately for F0, F1, and Free, and by Production, QA, and Stage.
+
+Do not overwrite the original Excel files or modify SQL data. Reconcile the approximate 48-resource count before finalizing.
