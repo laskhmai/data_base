@@ -1,167 +1,95 @@
-## Task: Discover Azure Free SKU Data Across Hybrid Synapse SQL Databases
+## Task: Create Separate Excel Report for 129 Additional Free SKU Resources
 
-### Objective
+From your previous Hybrid Synapse SQL discovery, you identified **129 additional potential Free SKU resources** that were not present in my original Aptio Cloudability Excel report.
 
-I have an Excel report exported from Aptio Cloudability containing Azure resources associated with Free SKU offerings.
+I want a separate Excel file containing **only those additional SQL resources**.
 
-I want to identify whether our existing Hybrid Synapse / SQL environment already stores similar information.
+### Step 1: Retrieve the 129 resources
 
-**Important: Do not search only for column names. Search the actual data values inside tables as well.**
+Use your previous discovery results and the SQL inventory tables, including:
 
-### 1. Discover relevant databases and tables
+- `Gold.AzureActiveResourceOwnerShipNormalized`
+- `AZURE.Resources`
+- Other relevant SQL inventory tables identified during discovery
 
-Connect to the authorized Hybrid Synapse SQL environment.
+Retrieve the 129 additional Free SKU candidates.
 
-Inspect the databases and schemas available to my account, including:
+Compare them with my original Aptio Excel using normalized full Azure Resource IDs.
 
-- `analytics`
-- `Gold`
-- `Silver`
-- `Staging`
-- `Cloudability`
-- Other accessible schemas containing Azure inventory, cost, usage, billing, resource properties, or SKU information
+Remove any prefix before `/subscriptions/`, normalize the paths, and perform exact matching.
 
-First inspect database metadata to identify potentially relevant tables.
+**Include only SQL resources that are not present in the original Aptio Excel.**
 
-Prioritize tables related to:
+### Step 2: Create the Excel file
 
-- Azure resource inventory
-- Azure resource ownership
-- Cloudability Spend
-- Cloudability Properties
-- Cloudability Tags
-- FOCUS cost and usage
-- Azure resource metadata
-- Product information
-- Billing meters
-- Resource SKU information
+Create:
 
-### 2. Search actual values, not just column names
+`SQL_Additional_129_FreeSKU_Review.xlsx`
 
-Search the actual data stored in relevant text, JSON, and descriptive columns.
+Include these columns:
 
-Look for values containing terms such as:
+1. Resource Type
+2. Resource Name
+3. Resource Group Name
+4. Account Name
+5. Subscription ID
+6. Resource ID
+7. SKU Name
+8. SKU Tier
+9. Environment
+10. Application Name
+11. Application Owner
+12. Application ID
+13. BillingOwnerAppsvcid
+14. Tags
+15. Source SQL Table
+16. Free SKU Evidence
+17. Validation Status
+18. Include in Final Report (leave blank)
+19. Review Comments (leave blank)
 
-`Free`, `Free Tier`, `Free Plan`, `F1`, `Express edition`, `Free SKU`, `App Service Free`, `Cosmos DB Free`.
+### Step 3: Validate the 129 records
 
-Also look for values similar to these Aptio Item Descriptions:
+For every resource:
 
-- `Azure App Service Free Plan - F1`
-- `Azure App Service Free Plan - Linux - F1`
-- `Azure Cosmos DB - Free Tier`
-- `Microsoft Defender for Storage - Free`
-- `Azure Arc-enabled SQL Server - Express edition`
+- Confirm its SKU information using the SQL inventory.
+- Identify whether it is a true Free SKU or a free usage tier.
+- Exclude records that are only zero-cost billing entries from the confirmed category.
+- Remove duplicate Resource IDs.
+- Confirm the resource does not already exist in the Aptio Excel.
+- Do not invent missing values.
 
-The matching terms may appear inside columns named:
+Classify each resource as:
 
-- `ItemDescription`
-- `ProductName`
-- `Sku`
-- `SkuName`
-- `Properties`
-- `ResourceProperties`
-- `MeterName`
-- `ServiceName`
-- `Operation`
-- `InstanceType`
+- Confirmed Free SKU
+- Free Tier / Allowance
+- Needs Verification
 
-However, do not restrict the search to these names. Inspect other relevant text fields where the data could be stored.
+### Step 4: Create a summary sheet
 
-### 3. Search JSON fields
+Add a worksheet called `Summary` showing:
 
-Some tables may contain Azure resource metadata stored as JSON.
+- Total additional unique SQL resources
+- Resource counts by Azure service
+- Confirmed Free SKU count
+- Free Tier / Allowance count
+- Needs Verification count
+- Count missing from original Aptio Excel
 
-For example:
+Your previous analysis reported 129 additional resources, but the displayed category counts summed to 133. Reconcile this difference.
 
-```json
-{
-  "sku": {
-    "name": "F1",
-    "tier": "Free"
-  }
-}
-```
+If the verified unique count is not exactly 129, explain why and use the actual count rather than forcing the result to 129.
 
-Search JSON fields such as `Properties` for SKU values, tier information, or Free plan descriptions.
+### Important instructions
 
-Use the appropriate JSON functions supported by the SQL engine.
+- Do not modify my original Aptio Excel.
+- Do not modify `FreeSku_Information_Updated.xlsx`.
+- Do not add these resources to the final report yet.
+- Do not modify any SQL tables.
+- Execute only read-only SQL queries.
+- Preserve the full Resource IDs for validation.
+- Create only this separate Excel file and its summary.
+- Make the output easy to review and filter.
+- Do not include the original 2,781 Aptio resources.
 
-Do not assume all text fields contain valid JSON.
-
-### 4. Search efficiently and safely
-
-This is a production-connected SQL environment.
-
-- Use only SELECT queries.
-- Start with system metadata and relevant schemas.
-- Avoid scanning every column of every large table.
-- Use targeted searches and bounded samples first.
-- Check table sizes before expensive queries.
-- Do not create tables or modify database records.
-- Do not execute unbounded full-table searches without reviewing their impact.
-- If a query requires scanning a very large dataset, show me the proposed query first.
-
-### 5. Identify which tables contain matching data
-
-For every table where relevant values are found, provide:
-
-| Database | Schema | Table | Column | Example matching value | Match count |
-|---|---|---|---|---|---|
-
-Also identify whether the matching table contains:
-
-- Resource ID
-- Resource Name
-- Resource Group
-- Subscription / Account
-- SKU Name
-- SKU Tier
-- Product or Item Description
-
-### 6. Check resource-level matching
-
-Compare the Free SKU records found in SQL with my Aptio Excel report.
-
-Use normalized Azure Resource IDs to identify matching resources.
-
-If Resource IDs contain additional prefixes, extract the full Azure path starting from `/subscriptions/`.
-
-Do not use partial resource names or approximate matches.
-
-Determine:
-
-1. Which Aptio Free SKU resources also exist in SQL.
-2. Which SQL tables contain the corresponding Free SKU information.
-3. Which resources have SKU information in SQL but not in Aptio.
-4. Which Aptio resources have no matching SQL SKU information.
-
-### 7. Validate what "Free" represents
-
-Distinguish between:
-
-- Confirmed Azure Free SKU
-- Free usage tier or allowance
-- SQL Server Express free edition
-- Free billing meter or promotion
-- Zero-cost usage record
-
-Do not classify a resource as having a Free SKU simply because a text value contains `Free` or its cost is zero.
-
-### 8. Deliver results before modifying Excel
-
-First provide a discovery report containing:
-
-1. Databases and tables inspected.
-2. Tables where Free SKU-related data was found.
-3. Exact column names containing those values.
-4. Sample matching records.
-5. Total matching records and distinct resources, where practical.
-6. Whether each table can identify the actual resource.
-7. Which SQL table is best suited for enriching my existing Excel report.
-8. Which Free SKU categories are supported by the data.
-
-**Do not update the Excel file yet.**
-
-Once the discovery is completed, recommend the best table or combination of tables for populating SKU information in the Excel report.
-
-Do not assume a table has no Free SKU data merely because its column names do not contain SKU or Item Description.
+After creating the file, provide its exact path, final unique resource count, and a breakdown by resource type.
