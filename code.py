@@ -1,1 +1,3 @@
-Hi All, I reviewed the Service Bus module and confirmed it exposes the primary and secondary connection-string outputs. I didn’t see any Service Bus-related failure in the logs shared; the error shown is related to site extensions. I’ll verify further to understand the cause and confirm whether this falls within Terraform support or needs another team’s assistance.
+Hi Ramkumar, sure, I can help. Add the provided code in a new file named servicebus-secrets.tf under your repository’s infrastructure folder, alongside servicebus.tf. Keep it outside the existing module block and replace <your KV Name> with your actual Key Vault name.
+
+Please share the changes for review before running the pipeline.
