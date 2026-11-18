@@ -1,3 +1,7 @@
-Hi Neeraja garu, while I was testing the Azure Metrics API fetch, I am getting an authentication issue because the existing client secret seems to be expired. Can you please let me know what authentication method or secret source I should use for testing?
+Can you check my Synapse database and identify all Metrics-related tables/views and how the Metrics data is currently flowing end to end?
 
-Also, do we have any Metrics collection design document similar to the Inventory design you shared earlier? I want to understand what Metrics tables we are planning, what data we are collecting, and how the Bronze, Silver, and Gold layers should be structured.
+Please tell me which tables are source/config, staging, and final/output, and what the current route is between them.
+
+Use only read-only queries — do not insert, update, delete, create, or change anything.
+
+If you have any login issue, I already shared a sample Python login code. Please use the same connection pattern/credentials from that code to connect and verify the Metrics flow.
