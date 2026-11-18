@@ -1,7 +1,5 @@
-Can you check my Synapse database and identify all Metrics-related tables/views and how the Metrics data is currently flowing end to end?
+Good. Now take one Azure SQL DB resource and one metric, for example cpu_percent / Average, and compare the API-fetched data against the existing Metrics.SQLDB_CPUAvg_5M table for the same resource and same time window.
 
-Please tell me which tables are source/config, staging, and final/output, and what the current route is between them.
+Please compare timestamp, value, id/key, aggregation and row count, and tell me whether they match.
 
-Use only read-only queries — do not insert, update, delete, create, or change anything.
-
-If you have any login issue, I already shared a sample Python login code. Please use the same connection pattern/credentials from that code to connect and verify the Metrics flow.
+Keep everything strictly read-only. Do not insert, update or delete anything.
