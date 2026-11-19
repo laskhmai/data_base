@@ -1,3 +1,2 @@
-SELECT *
-FROM corporate_information_technology_raw_dev_000.cldcostop.metrics
-LIMIT 100;
+1. For metrics collection, what exactly should I work on, and what part are you already handling?
+2. Should I only fetch and validate the metrics now, or should I also write the data into the Bronze metrics table?
