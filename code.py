@@ -1,2 +1,1 @@
-1. For metrics collection, what exactly should I work on, and what part are you already handling?
-2. Should I only fetch and validate the metrics now, or should I also write the data into the Bronze metrics table?
+Yeah andi, I was only checking the old metrics code to understand how the data is coming from the API and how the SQL flow is working. I just fetched some sample data and viewed it; I didn’t write or load anything anywhere. I was mainly confused about where exactly I should start and what part I should work on, so I was trying to understand the existing flow first.
