@@ -1,21 +1,30 @@
-# ------------------------------------------------------------
-# Fetch MongoDB processes for one project
-# ------------------------------------------------------------
+from requests.auth import HTTPDigestAuth
+import requests
 
-PROJECT_ID = "PASTE_ONE_PROJECT_ID_HERE"
+# Use your existing values
+PROJECT_ID = "PASTE_PROJECT_ID"
 
-process_url = (
+# From the process output you already fetched
+PROCESS_ID = "PASTE_HOSTNAME:PORT"
+
+url = (
     f"https://cloud.mongodb.com/api/atlas/v2/groups/"
-    f"{PROJECT_ID}/processes"
+    f"{PROJECT_ID}/processes/{PROCESS_ID}/measurements"
 )
 
 headers = {
     "Accept": "application/vnd.atlas.2025-03-12+json"
 }
 
+params = {
+    "granularity": "PT5M",
+    "period": "PT1H"
+}
+
 response = requests.get(
-    process_url,
+    url,
     headers=headers,
+    params=params,
     auth=HTTPDigestAuth(public_key, private_key),
     timeout=30
 )
@@ -24,20 +33,30 @@ print("Status Code:", response.status_code)
 
 if response.status_code == 200:
     data = response.json()
-    processes = data.get("results", [])
 
-    print("Processes found:", len(processes))
+    print("Process:", data.get("processId"))
+    print("Start:", data.get("start"))
+    print("End:", data.get("end"))
+    print("Granularity:", data.get("granularity"))
 
-    for p in processes:
-        print("--------------------------------")
-        print("ID:", p.get("id"))
-        print("Host:", p.get("hostname"))
-        print("Port:", p.get("port"))
-        print("Type:", p.get("typeName"))
-        print("Replica Set:", p.get("replicaSetName"))
-        print("Version:", p.get("version"))
-        print("Last Ping:", p.get("lastPing"))
+    measurements = data.get("measurements", [])
+
+    print("Measurements found:", len(measurements))
+
+    for metric in measurements:
+        print("\n----------------------------")
+        print("Metric:", metric.get("name"))
+        print("Units:", metric.get("units"))
+
+        points = metric.get("dataPoints", [])
+
+        for point in points[:5]:
+            print(
+                point.get("timestamp"),
+                "=>",
+                point.get("value")
+            )
 
 else:
-    print("Process API call failed")
-    print(response.text[:1000])
+    print("Metrics API failed")
+    print(response.text[:1500])
