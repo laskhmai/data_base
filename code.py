@@ -1,3 +1,1 @@
-As part of the metrics collection work, validated MongoDB integration using the new Databricks configuration and Vault-based authentication.
-Successfully retrieved organization, project, process, and metric data for one MongoDB organization and confirmed the metric API is working as expected.
-The same approach can be extended to all required MongoDB projects and metrics during the full collection implementation.
+Could you please share the Git repository URL and the target VNet and subnet details for the secondary private endpoint? We will check whether the current Terraform module supports adding an additional private endpoint to the existing Redis instance.
